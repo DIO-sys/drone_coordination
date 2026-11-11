@@ -90,6 +90,29 @@ Work one phase at a time. Each phase ends with passing tests and its acceptance 
 - **Collision avoidance or airspace deconfliction.** Named as a limitation, not simulated.
 - **Multi-agent LLM negotiation.** Violates rule 1.
 
+## Documentation (update these at the end of every phase)
+
+Three documents are kept current as the project grows. Updating them is part of a phase's
+definition of done, not a separate chore — a phase is not finished until they reflect it.
+
+| File | Audience | What goes in it |
+|---|---|---|
+| `README.md` | someone finding the repo | what it is, the claim, quickstart, the status table (mark the phase done), current test counts |
+| `ARCHITECTURE.md` | someone changing the code | module responsibilities, data flow, and **every non-obvious decision with its rationale**, including bugs that shaped the design |
+| `EXPLANATION.md` | the author, revisiting this later | plain-language guide. Assumes no knowledge of behaviour trees, CBBA, gradient boosting or LLM fine-tuning. Explains *why* each piece exists, not just what it does |
+
+Rules for keeping them useful:
+
+- **Record what went wrong, not just what the code does.** Every bug that changed a design
+  decision gets a sentence saying what broke and what it would have corrupted downstream.
+  These are the most valuable lines in all three documents.
+- **Never let a number drift.** Test counts, golden-case counts, check counts, timing
+  figures: re-measure, do not retype from memory.
+- **Limitations go in `ARCHITECTURE.md` §9 and stay there** until they are fixed or they
+  reach `RESULTS.md`. Do not quietly drop one.
+- `CLAUDE.md` (this file) stays the working rules and the phase plan. It is not a fourth
+  explanation.
+
 ## Conventions
 
 - Every module gets `tests/test_<module>.py`. The validator gets a golden corpus. The sim gets determinism tests. Coordination gets property tests.
