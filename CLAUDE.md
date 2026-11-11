@@ -1,0 +1,96 @@
+# PlanGuard
+
+Verifier-in-the-loop mission planning for drone teams. An operator states intent in natural language; a fine-tuned small model emits a typed mission plan; a static validator and a simulator verify it; an XGBoost surrogate predicts failure risk cheaply enough to screen candidates; a LangGraph loop repairs failures from specific machine-generated errors; a human approves before anything executes.
+
+Full design: the plan at `~/.claude/plans/read-through-this-understand-parsed-dragon.md`.
+
+## Why this project exists
+
+An LLM that authors mission plans for aircraft is only acceptable if every plan is machine-verified before a human ever sees it. This project builds the verification loop, not just the generator.
+
+The claim that organizes the whole design:
+
+> Schema-constrained decoding takes any competent base model to ~100% *schema-valid* JSON. It cannot produce referential integrity, correct aircraft arithmetic, or an acyclic dependency graph — those require understanding the domain.
+
+So the headline metrics are **validator-pass rate** and **simulated mission success**, never JSON validity. Fine-tuning has something real to win here, and the evaluation is built to let it lose: if a constrained-decoding base model closes the gap, that is a negative result and gets published as one.
+
+## Scope
+
+- Missions are surveillance coverage, search, station-keeping and relay positioning. No weapons, targeting, or strike logic anywhere in the codebase.
+- Link availability is modeled abstractly (range-gated two-state Markov process). RF propagation fidelity is explicitly out of scope; `sim/link.py` stays behind a narrow interface so a real channel model could be swapped in later.
+- This is a research simulation, not flight software.
+
+## Layers
+
+1. `planguard/dsl` — the mission DSL: Pydantic schema (the fine-tune target), static validator, py_trees compiler, plan sampler
+2. `planguard/sim` — world, map features, kinematics, task semantics, stochastic link and wind, scenario randomization, logging, replay
+3. `planguard/coord` — CBBA allocation of the plan's team-level intent to specific aircraft
+4. `planguard/risk` — plan-time features, XGBoost failure-risk surrogate, SHAP, calibration
+5. `planguard/copilot` — dataset generation, QLoRA fine-tune, constrained decoding, LangChain tools, LangGraph approval graph
+6. `planguard/debrief` — mission scoring, experiment figures
+7. `planguard/api` + `dashboard/` — FastAPI WebSocket stream, plan diff, tree view, risk panel, live map
+
+## Non-negotiable rules
+
+1. **The LLM never touches the execution loop.** It proposes a plan; the validator, the simulator and a human gate it. No plan executes without an approval event logged in `events.jsonl`, and a test must prove it.
+2. **Risk features must be plan-time observable.** No realized outage timings, no simulation outcomes, nothing the agent would not have before the plan runs.
+3. **Never evaluate the fine-tune on schema validity alone.** Validator-pass rate, simulated mission success and repair iterations are the metrics. Schema validity is reported but is never the claim.
+4. **The held-out evaluation set is hand-written**, never template-generated or back-translated. Report it separately from the in-distribution test split.
+5. **Determinism.** Same seed + same config = identical run, bit for bit. `numpy.random.Generator` passed explicitly, per-entity streams via `SeedSequence.spawn`, sorted iteration over every collection. Never the global RNG.
+6. **Split by scenario seed and by plan.** Never a random row shuffle — the same plan must not appear in both train and test of the risk model.
+7. **CBBA owns aircraft assignment.** The plan expresses team-level intent; it never names tail numbers.
+8. **Fixed timestep** `dt_s = 0.1`. Anything slower is scheduled by tick index. Nothing uses wall-clock time inside the sim.
+9. **Units in names.** `dist_m`, `speed_mps`, `t_s`, `budget_s`, `area_m2`.
+10. **Config is YAML into Pydantic.** Derived values are computed in validators, never written into YAML. No magic numbers in code.
+11. **LLM deps are an optional `llm` dependency group.** `uv sync` without it must still run the sim, CBBA, the validator and the risk model. Nothing outside `planguard/copilot/` may import from it, so a reviewer with no GPU can reproduce everything but Phase 6.
+12. **Every validator rejection is machine-readable.** A `ValidationError` carries a stable `code`, a JSON path to the offending field, and a `hint`. The repair loop is only as good as these messages, so they are part of the contract and are tested.
+
+## Commands
+
+```bash
+uv sync                                   # add --extra llm for phase 6
+uv run pytest
+uv run ruff check . && uv run mypy planguard
+uv run python -m planguard.dsl.validate tests/golden/cases.yaml      # phase 0 acceptance
+uv run python -m planguard.dsl.validate examples/ridge.json
+```
+
+## Build order
+
+Work one phase at a time. Each phase ends with passing tests and its acceptance check.
+
+| Phase | Deliverable | Acceptance check |
+|---|---|---|
+| **0** | DSL schema + static validator + golden corpus | 8 checks implemented; ~40 hand-written good/bad plans classified correctly; every rejection carries a code, a JSON path and a hint |
+| **1** | Sim: world, map features, kinematics, task semantics, stochastic link + wind, scenario randomization, logging, replay viewer | Seeded run reproducible bit-for-bit across two processes; a hand-written plan compiles to py_trees and executes to completion; **outcome varies across seeds** — if it does not, Phase 4 is impossible |
+| **2** | CBBA allocation + end-to-end execution + mission metrics | CBBA converges with no duplicate or orphaned assignments; mission success / coverage / completion time computed from logs |
+| **3** | Plan sampler + batch harness -> risk dataset | ~2,000 (plan, scenario) pairs x 20 seeds; label = failure rate; split by plan *and* seed |
+| **4** | XGBoost risk surrogate + SHAP + calibration | Beats a "path length over budget" heuristic on held-out plans; **calibration curve reported, not just AUC**; screening speedup measured |
+| **5** | NL dataset: plan-first sampling, verifier filter, back-translation, hand-written held-out set (150-300 items) | Verifier-filter yield rate reported; held-out set authored independently of the templates |
+| **6** | QLoRA fine-tune + constrained decoding + five-arm evaluation | Headline table: base zero-shot / base few-shot / base+constrained / fine-tuned / fine-tuned+constrained, scored on schema-valid %, **validator-pass %**, per-field exact match, task-level F1, **simulated mission success**, repair iterations, prompt tokens, p50/p95 latency. Needs a GPU |
+| **7** | LangChain tools + LangGraph graph with approval interrupt + repair loop | End-to-end generate -> validate -> risk screen -> simulate -> repair (bounded) -> approve -> commit; approval-gate test from rule 1 passes |
+| **8** | FastAPI + dashboard | Plan diff, behavior-tree render, risk panel with SHAP, live map, approve button. Timeboxed |
+| **9** | `RESULTS.md` + demo GIF | Headline table, E3 ablation plot, method in a paragraph, nulls stated plainly, limitations section |
+
+**Why this order:** the validator before everything, because the dataset filter, the repair loop and the headline metric all depend on it. The sim before the risk model, because the risk model trains on simulated outcomes. The risk model before the fine-tune, because the agent graph uses it to screen. The fine-tune before the graph, because the graph orchestrates it.
+
+## Experiments
+
+- **E1** five-arm generation quality (Phase 6) — the headline.
+- **E2** surrogate calibration, SHAP, screening speedup (Phase 4).
+- **E3** verification-stage ablation (Phase 7): none / schema only / schema+validator / schema+validator+risk+sim, scored on end-to-end approved-plan mission success. **This is what makes the project a systems result rather than an LLM demo.**
+- **E4** repair convergence (Phase 7): iterations to validity, fraction unrecoverable, which validator errors the model can and cannot self-repair.
+
+## Do not build
+
+- **RAG / vector index over logs.** A deterministic query over `events.jsonl` is better, faster and more honest.
+- **An RF channel model.** Out of scope by decision; `RESULTS.md` says so plainly. Do not claim comms fidelity anywhere.
+- **Collision avoidance or airspace deconfliction.** Named as a limitation, not simulated.
+- **Multi-agent LLM negotiation.** Violates rule 1.
+
+## Conventions
+
+- Every module gets `tests/test_<module>.py`. The validator gets a golden corpus. The sim gets determinism tests. Coordination gets property tests.
+- Logs: one row per tick per drone (`drones.parquet`), one row per event (`events.jsonl`), one row per run (`runs.parquet`). Risk and debrief read only from these.
+- Keep functions pure where possible; side effects (I/O, RNG draws) at the edges.
+- Commit at the end of each phase with a message naming the phase.

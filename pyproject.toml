@@ -1,0 +1,39 @@
+[project]
+name = "planguard"
+version = "0.1.0"
+description = "Verifier-in-the-loop mission planning for drone teams"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+    "pyarrow>=17.0",
+    "py_trees>=2.2",
+]
+
+[project.optional-dependencies]
+risk = ["xgboost>=2.1", "scikit-learn>=1.5", "shap>=0.46", "matplotlib>=3.9"]
+llm = ["transformers>=4.45", "peft>=0.13", "trl>=0.11", "bitsandbytes>=0.44", "outlines>=0.1", "langchain>=0.3", "langgraph>=0.2"]
+api = ["fastapi>=0.115", "uvicorn>=0.32", "websockets>=13.0"]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "hypothesis>=6.112", "ruff>=0.7", "mypy>=1.13", "types-PyYAML"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

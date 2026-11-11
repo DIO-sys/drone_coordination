@@ -1,0 +1,429 @@
+# Golden corpus for the static validator (Phase 0 acceptance check).
+#
+# Each case names the exact set of error codes the validator must emit.
+# `expect: []` must validate cleanly. `schema_error: true` must be rejected by
+# Pydantic before the validator runs — those cases document the boundary
+# between schema validity (which constrained decoding gives you for free) and
+# semantic validity (which it cannot).
+#
+# Durations under experiments/configs/world.yaml, fleet of 4 at 30 m/s:
+#   sweep north_ridge   2 ac -> 565 s      station_keep bridge dwell 600 -> 772 s
+#   sweep north_ridge   1 ac -> 899 s      corridor_patrol river        -> 227 s
+#   sweep south_valley  1 ac -> 387 s      corridor_patrol highway      -> 270 s
+#   sweep east_sector   1 ac -> 439 s      rally rally_alpha            ->  27 s
+
+cases:
+  # ---------------------------------------------------------------- valid ---
+  - name: minimal_sweep
+    expect: []
+    plan:
+      name: minimal sweep
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+
+  - name: sweep_single_aircraft
+    expect: []
+    plan:
+      name: single aircraft ridge sweep
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 1}
+
+  - name: demo_ridge_bridge_rally
+    expect: []
+    plan:
+      name: ridge sweep with bridge overwatch
+      rationale: Two aircraft on the ridge, one holding the bridge, all recalled on link loss.
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600, priority: 1}
+      fallbacks:
+        - {trigger: link_lost, action: return_to_rally, rally_point: rally_alpha}
+
+  - name: sequential_dependency
+    expect: []
+    plan:
+      name: valley then east sector
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: sweep_east, kind: sweep, target: east_sector, depends_on: [sweep_valley]}
+
+  - name: corridor_patrol_valid
+    expect: []
+    plan:
+      name: river patrol
+      time_budget_s: 600
+      tasks:
+        - {id: patrol_river, kind: corridor_patrol, target: river_corridor}
+
+  - name: station_keep_with_dwell
+    expect: []
+    plan:
+      name: bridge overwatch
+      time_budget_s: 600
+      tasks:
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 300}
+
+  - name: full_fleet_concurrency
+    expect: []
+    plan:
+      name: four aircraft at once
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600}
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+
+  - name: fallback_applies_to_specific_task
+    expect: []
+    plan:
+      name: targeted fallback
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: link_lost, action: return_to_rally, rally_point: rally_alpha, applies_to: [sweep_ridge]}
+
+  - name: empty_applies_to_covers_every_task
+    expect: []
+    plan:
+      name: blanket fallback
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
+        - {id: patrol_river, kind: corridor_patrol, target: river_corridor, requires_link: true}
+      fallbacks:
+        - {trigger: link_lost, action: return_to_rally, rally_point: rally_bravo}
+
+  - name: no_link_tasks_needs_no_fallback
+    expect: []
+    plan:
+      name: unlinked survey
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: false}
+
+  - name: start_after_within_budget
+    expect: []
+    plan:
+      name: delayed start
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, start_after_s: 100}
+
+  - name: loiter_fallback_needs_no_rally_point
+    expect: []
+    plan:
+      name: loiter on link loss
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: true}
+      fallbacks:
+        - {trigger: link_lost, action: loiter}
+
+  - name: constraints_and_rally_task
+    expect: []
+    plan:
+      name: constrained mission with recovery leg
+      time_budget_s: 1200
+      constraints: [stay_within_map, single_pass]
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: go_home, kind: rally, target: rally_alpha, depends_on: [sweep_valley]}
+
+  # ------------------------------------------------------------- rejected ---
+  - name: duplicate_task_id
+    expect: [DUPLICATE_TASK_ID]
+    plan:
+      name: duplicate ids
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: sweep_valley, kind: sweep, target: east_sector}
+
+  - name: unknown_map_feature
+    expect: [UNKNOWN_MAP_FEATURE]
+    plan:
+      name: invented terrain
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_west, kind: sweep, target: west_ridge}
+
+  - name: sweep_targets_a_point
+    expect: [WRONG_FEATURE_KIND]
+    plan:
+      name: sweeping a point
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_bridge, kind: sweep, target: bridge}
+
+  - name: station_keep_targets_an_area
+    expect: [WRONG_FEATURE_KIND]
+    plan:
+      name: holding an area
+      time_budget_s: 1200
+      tasks:
+        - {id: hold_ridge, kind: station_keep, target: north_ridge, dwell_s: 300}
+
+  - name: corridor_patrol_targets_an_area
+    expect: [WRONG_FEATURE_KIND]
+    plan:
+      name: patrolling an area
+      time_budget_s: 1200
+      tasks:
+        - {id: patrol_valley, kind: corridor_patrol, target: south_valley}
+
+  - name: rally_targets_a_corridor
+    expect: [WRONG_FEATURE_KIND]
+    plan:
+      name: rallying to a corridor
+      time_budget_s: 1200
+      tasks:
+        - {id: go_home, kind: rally, target: river_corridor}
+
+  - name: station_keep_missing_dwell
+    expect: [MISSING_REQUIRED_FIELD]
+    plan:
+      name: station keep without dwell
+      time_budget_s: 1200
+      tasks:
+        - {id: hold_bridge, kind: station_keep, target: bridge}
+
+  - name: return_to_rally_missing_rally_point
+    expect: [MISSING_RALLY_POINT]
+    plan:
+      name: rally with nowhere to go
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: low_fuel, action: return_to_rally}
+
+  - name: rally_point_unknown_feature
+    expect: [UNKNOWN_MAP_FEATURE]
+    plan:
+      name: rally to nowhere
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: low_fuel, action: return_to_rally, rally_point: fob_charlie}
+
+  - name: rally_point_is_an_area
+    expect: [WRONG_FEATURE_KIND]
+    plan:
+      name: rally to an area
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: low_fuel, action: return_to_rally, rally_point: east_sector}
+
+  - name: unknown_task_dependency
+    expect: [UNKNOWN_TASK_REF]
+    plan:
+      name: dangling dependency
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, depends_on: [recon_first]}
+
+  - name: self_dependency
+    expect: [SELF_DEPENDENCY]
+    plan:
+      name: task waits for itself
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, depends_on: [sweep_valley]}
+
+  - name: two_task_cycle
+    expect: [DEPENDENCY_CYCLE]
+    plan:
+      name: mutual dependency
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, depends_on: [sweep_east]}
+        - {id: sweep_east, kind: sweep, target: east_sector, depends_on: [sweep_valley]}
+
+  - name: three_task_cycle
+    expect: [DEPENDENCY_CYCLE]
+    plan:
+      name: three way cycle
+      time_budget_s: 1200
+      tasks:
+        - {id: a, kind: sweep, target: south_valley, depends_on: [c]}
+        - {id: b, kind: sweep, target: east_sector, depends_on: [a]}
+        - {id: c, kind: corridor_patrol, target: river_corridor, depends_on: [b]}
+
+  - name: fleet_oversubscribed_single_task
+    expect: [FLEET_OVERSUBSCRIBED]
+    plan:
+      name: more aircraft than exist
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 5}
+
+  - name: peak_concurrency_exceeded
+    expect: [PEAK_CONCURRENCY_EXCEEDED]
+    plan:
+      name: five aircraft at once from a fleet of four
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600}
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: sweep_east, kind: sweep, target: east_sector}
+
+  - name: time_budget_exceeded_single_task
+    expect: [TIME_BUDGET_EXCEEDED]
+    plan:
+      name: ridge sweep in too little time
+      time_budget_s: 400
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+
+  - name: time_budget_exceeded_when_sequenced
+    expect: [TIME_BUDGET_EXCEEDED]
+    plan:
+      name: sequencing pushes past the budget
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600, depends_on: [sweep_ridge]}
+
+  - name: start_after_beyond_budget
+    expect: [START_AFTER_BEYOND_BUDGET, TIME_BUDGET_EXCEEDED]
+    plan:
+      name: starts after the mission ends
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, start_after_s: 1500}
+
+  - name: missing_link_fallback
+    expect: [MISSING_LINK_FALLBACK]
+    plan:
+      name: link dependent task with no recovery
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: true}
+
+  - name: link_fallback_has_wrong_trigger
+    expect: [MISSING_LINK_FALLBACK]
+    plan:
+      name: fallback triggers on the wrong condition
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: true}
+      fallbacks:
+        - {trigger: low_fuel, action: return_to_rally, rally_point: rally_alpha}
+
+  - name: link_fallback_does_not_cover_the_task
+    expect: [MISSING_LINK_FALLBACK]
+    plan:
+      name: fallback covers the wrong task
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: link_lost, action: loiter, applies_to: [sweep_valley]}
+
+  - name: unknown_fallback_target
+    expect: [UNKNOWN_FALLBACK_TARGET]
+    plan:
+      name: fallback names a task that does not exist
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: low_fuel, action: loiter, applies_to: [sweep_ridge]}
+
+  - name: cycle_blocks_the_schedule_checks
+    expect: [DEPENDENCY_CYCLE]
+    plan:
+      name: cycle hides a budget overrun
+      time_budget_s: 10
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, depends_on: [sweep_east]}
+        - {id: sweep_east, kind: sweep, target: east_sector, depends_on: [sweep_valley]}
+
+  - name: unknown_feature_blocks_the_schedule_checks
+    expect: [UNKNOWN_MAP_FEATURE]
+    plan:
+      name: unresolvable target hides a budget overrun
+      time_budget_s: 100
+      tasks:
+        - {id: sweep_west, kind: sweep, target: west_ridge}
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 1}
+
+  - name: several_independent_errors
+    expect: [DUPLICATE_TASK_ID, MISSING_REQUIRED_FIELD, UNKNOWN_FALLBACK_TARGET]
+    plan:
+      name: three unrelated problems
+      time_budget_s: 1200
+      tasks:
+        - {id: t1, kind: sweep, target: south_valley}
+        - {id: t1, kind: station_keep, target: bridge}
+      fallbacks:
+        - {trigger: low_fuel, action: loiter, applies_to: [nonexistent]}
+
+  # --------------------------------------------------------- schema errors ---
+  - name: schema_unknown_field
+    schema_error: true
+    plan:
+      name: hallucinated field
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, altitude_m: 400}
+
+  - name: schema_unknown_task_kind
+    schema_error: true
+    plan:
+      name: invented task kind
+      time_budget_s: 1200
+      tasks:
+        - {id: strike_target, kind: strike, target: bridge}
+
+  - name: schema_zero_aircraft
+    schema_error: true
+    plan:
+      name: zero aircraft
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, aircraft_count: 0}
+
+  - name: schema_priority_out_of_range
+    schema_error: true
+    plan:
+      name: priority four
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley, priority: 4}
+
+  - name: schema_empty_task_list
+    schema_error: true
+    plan:
+      name: no tasks
+      time_budget_s: 1200
+      tasks: []
+
+  - name: schema_negative_time_budget
+    schema_error: true
+    plan:
+      name: negative budget
+      time_budget_s: -100
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+
+  - name: schema_unknown_fallback_action
+    schema_error: true
+    plan:
+      name: invented fallback action
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+      fallbacks:
+        - {trigger: link_lost, action: self_destruct}

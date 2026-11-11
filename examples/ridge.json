@@ -1,0 +1,31 @@
+{
+  "name": "ridge sweep with bridge overwatch",
+  "rationale": "Two aircraft sweep the north ridge while a third holds the bridge. Any aircraft losing its link returns to rally alpha.",
+  "time_budget_s": 1200,
+  "constraints": ["stay_within_map"],
+  "tasks": [
+    {
+      "id": "sweep_ridge",
+      "kind": "sweep",
+      "target": "north_ridge",
+      "aircraft_count": 2,
+      "priority": 2,
+      "requires_link": true
+    },
+    {
+      "id": "hold_bridge",
+      "kind": "station_keep",
+      "target": "bridge",
+      "dwell_s": 600,
+      "priority": 1,
+      "requires_link": true
+    }
+  ],
+  "fallbacks": [
+    {
+      "trigger": "link_lost",
+      "action": "return_to_rally",
+      "rally_point": "rally_alpha"
+    }
+  ]
+}

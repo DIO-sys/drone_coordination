@@ -1,0 +1,42 @@
+# Default world for the golden corpus, the examples and Phase 1.
+# Coordinates are metres in a local ENU frame.
+world_map:
+  features:
+    - name: base
+      kind: point
+      coords_m: [[500.0, 500.0]]
+    - name: rally_alpha
+      kind: point
+      coords_m: [[1200.0, 900.0]]
+    - name: rally_bravo
+      kind: point
+      coords_m: [[4800.0, 1200.0]]
+    - name: bridge
+      kind: point
+      coords_m: [[5000.0, 3000.0]]
+    - name: relay_hill
+      kind: point
+      coords_m: [[2600.0, 4100.0]]
+    - name: north_ridge
+      kind: area
+      coords_m: [[2000.0, 6250.0], [4000.0, 6250.0], [4000.0, 7750.0], [2000.0, 7750.0]]
+    - name: south_valley
+      kind: area
+      coords_m: [[1000.0, 1000.0], [2500.0, 1000.0], [2500.0, 2000.0], [1000.0, 2000.0]]
+    - name: east_sector
+      kind: area
+      coords_m: [[6000.0, 2500.0], [7000.0, 2500.0], [7000.0, 3500.0], [6000.0, 3500.0]]
+    - name: river_corridor
+      kind: corridor
+      coords_m: [[1500.0, 3000.0], [3000.0, 3500.0], [4500.0, 3200.0]]
+    - name: highway_corridor
+      kind: corridor
+      coords_m: [[5200.0, 1000.0], [5200.0, 4000.0]]
+fleet:
+  aircraft_count: 4
+  speed_mps: 30.0
+  sensor_swath_m: 150.0
+  base_feature: base
+validator:
+  time_estimate_slack: 1.0
+  require_link_fallback: true
