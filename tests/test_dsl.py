@@ -148,7 +148,7 @@ def test_clean_plan_skips_nothing(cfg: WorldConfig) -> None:
 
 def test_skippable_checks_are_declared_consistently() -> None:
     assert set(CHECK_NAMES) >= NEEDS_SCHEDULE
-    assert len(CHECK_NAMES) == 8
+    assert len(CHECK_NAMES) == 9
 
 
 def test_every_blocking_code_is_a_real_code() -> None:

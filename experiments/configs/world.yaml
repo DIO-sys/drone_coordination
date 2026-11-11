@@ -44,7 +44,7 @@ sim:
   dt_s: 0.1
   max_duration_s: 3600.0
 link:
-  range_m: 6000.0
+  range_m: 7500.0
   p_drop_per_s: 0.02
   p_recover_per_s: 0.4
 wind:

@@ -37,8 +37,8 @@ cases:
       rationale: Two aircraft on the ridge, one holding the bridge, all recalled on link loss.
       time_budget_s: 1200
       tasks:
-        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
-        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600, priority: 1}
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600, priority: 1, requires_link: true}
       fallbacks:
         - {trigger: link_lost, action: return_to_rally, rally_point: rally_alpha}
 
@@ -83,10 +83,10 @@ cases:
       name: targeted fallback
       time_budget_s: 1200
       tasks:
-        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
-        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: true}
       fallbacks:
-        - {trigger: link_lost, action: return_to_rally, rally_point: rally_alpha, applies_to: [sweep_ridge]}
+        - {trigger: link_lost, action: return_to_rally, rally_point: rally_alpha, applies_to: [sweep_valley]}
 
   - name: empty_applies_to_covers_every_task
     expect: []
@@ -94,7 +94,7 @@ cases:
       name: blanket fallback
       time_budget_s: 1200
       tasks:
-        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: true}
         - {id: patrol_river, kind: corridor_patrol, target: river_corridor, requires_link: true}
       fallbacks:
         - {trigger: link_lost, action: return_to_rally, rally_point: rally_bravo}
@@ -326,10 +326,10 @@ cases:
       name: fallback covers the wrong task
       time_budget_s: 1200
       tasks:
-        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
-        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: sweep_valley, kind: sweep, target: south_valley, requires_link: true}
+        - {id: patrol_river, kind: corridor_patrol, target: river_corridor}
       fallbacks:
-        - {trigger: link_lost, action: loiter, applies_to: [sweep_valley]}
+        - {trigger: link_lost, action: loiter, applies_to: [patrol_river]}
 
   - name: unknown_fallback_target
     expect: [UNKNOWN_FALLBACK_TARGET]
@@ -369,6 +369,34 @@ cases:
         - {id: t1, kind: station_keep, target: bridge}
       fallbacks:
         - {trigger: low_fuel, action: loiter, applies_to: [nonexistent]}
+
+  - name: link_required_beyond_range
+    expect: [LINK_RANGE_UNREACHABLE]
+    plan:
+      name: link required outside link range
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
+      fallbacks:
+        - {trigger: link_lost, action: loiter}
+
+  - name: link_required_within_range_is_fine
+    expect: []
+    plan:
+      name: link required inside link range
+      time_budget_s: 1200
+      tasks:
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 300, requires_link: true}
+      fallbacks:
+        - {trigger: link_lost, action: loiter}
+
+  - name: link_range_and_missing_fallback_both_fire
+    expect: [MISSING_LINK_FALLBACK, LINK_RANGE_UNREACHABLE]
+    plan:
+      name: out of range and no recovery
+      time_budget_s: 1200
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2, requires_link: true}
 
   # --------------------------------------------------------- schema errors ---
   - name: schema_unknown_field

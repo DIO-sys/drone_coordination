@@ -185,6 +185,33 @@ class SimConfig(BaseModel):
         return int(round(duration_s / self.dt_s))
 
 
+class BehaviourConfig(BaseModel):
+    """Thresholds the behaviour tree's conditions fire on."""
+
+    model_config = ConfigDict(frozen=True)
+
+    #: How long the link must stay down before a link_lost fallback triggers.
+    link_lost_grace_s: float = Field(default=5.0, ge=0)
+    #: Remaining endurance at which a low_fuel fallback triggers.
+    low_fuel_reserve_s: float = Field(default=240.0, ge=0)
+    #: A task handed off more than this many times is marked failed rather than
+    #: cycling forever.
+    max_handoffs: int = Field(default=2, ge=0)
+
+
+class ScenarioConfig(BaseModel):
+    """Per-seed randomisation. This is where the simulator's variance comes from,
+    and Phase 4 is impossible without it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    #: Chance each aircraft is unavailable for a given run (maintenance, etc).
+    #: At least one aircraft is always available.
+    p_aircraft_unavailable: float = Field(default=0.15, ge=0, le=1)
+    #: Radius of the disc around base that start positions are drawn from.
+    start_jitter_m: float = Field(default=300.0, ge=0)
+
+
 class ValidatorConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -204,6 +231,8 @@ class WorldConfig(BaseModel):
     sim: SimConfig = SimConfig()
     link: LinkConfig = LinkConfig()
     wind: WindConfig = WindConfig()
+    behaviour: BehaviourConfig = BehaviourConfig()
+    scenario: ScenarioConfig = ScenarioConfig()
     validator: ValidatorConfig = ValidatorConfig()
 
     @model_validator(mode="after")

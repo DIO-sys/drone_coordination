@@ -10,7 +10,7 @@
       "target": "north_ridge",
       "aircraft_count": 2,
       "priority": 2,
-      "requires_link": true
+      "requires_link": false
     },
     {
       "id": "hold_bridge",

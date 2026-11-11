@@ -1,6 +1,6 @@
 """The static validator — the spine of the project.
 
-Eight checks. The first four establish that the plan is *schedulable*; the
+Nine checks. The first four establish that the plan is *schedulable*; the
 capacity and time checks need a schedule, so when a blocking error is found
 they are reported as skipped rather than passing vacuously.
 
@@ -27,6 +27,7 @@ CHECK_NAMES = (
     "fleet_capacity",
     "time_feasibility",
     "link_fallbacks",
+    "link_reachability",
     "fallback_targets",
 )
 
@@ -368,6 +369,47 @@ def check_link_fallbacks(plan: MissionPlan, cfg: WorldConfig) -> list[Validation
     return errs
 
 
+def check_link_reachability(plan: MissionPlan, cfg: WorldConfig) -> list[ValidationError]:
+    """A task that requires a link must be inside link range for its *whole* extent.
+
+    Found by running the simulator in Phase 1: the demo plan asked two aircraft
+    to sweep an area wholly outside link range while declaring requires_link,
+    so the link_lost fallback fired on arrival every single run and the sweep
+    could never progress. That is statically detectable, so it should never have
+    reached the simulator.
+
+    The worst-case coordinate is used, not the centroid, because the aircraft
+    has to cover the entire feature. This assumes the Phase 1 link model:
+    aircraft-to-base only, no relay. If relaying is ever modelled, the DSL's
+    max_two_hops constraint is where that would be expressed.
+    """
+    errs: list[ValidationError] = []
+    for i, task in enumerate(plan.tasks):
+        if not task.requires_link:
+            continue
+        feature = cfg.world_map.get(task.target)
+        if feature is None:  # already reported by check_feature_refs
+            continue
+        farthest_m = max(dist_m(cfg.base_m, c) for c in feature.coords_m)
+        if farthest_m > cfg.link.range_m:
+            errs.append(
+                ValidationError(
+                    code="LINK_RANGE_UNREACHABLE",
+                    path=f"tasks[{i}].requires_link",
+                    message=(
+                        f"task {task.id!r} requires a link but {task.target!r} reaches "
+                        f"{farthest_m:.0f} m from base, beyond the {cfg.link.range_m:.0f} m "
+                        f"link range"
+                    ),
+                    hint=(
+                        "clear requires_link, or retarget the task to a feature within "
+                        f"{cfg.link.range_m:.0f} m of base"
+                    ),
+                )
+            )
+    return errs
+
+
 def check_fallback_targets(plan: MissionPlan, cfg: WorldConfig) -> list[ValidationError]:
     errs: list[ValidationError] = []
     known = set(plan.task_ids)
@@ -393,6 +435,7 @@ CHECKS = (
     check_fleet_capacity,
     check_time_feasibility,
     check_link_fallbacks,
+    check_link_reachability,
     check_fallback_targets,
 )
 #: Checks that need a schedulable plan, and so are skipped after a blocking error.

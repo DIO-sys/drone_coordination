@@ -24,7 +24,7 @@ So the headline metrics are **validator-pass rate** and **simulated mission succ
 
 1. `planguard/dsl` — the mission DSL: Pydantic schema (the fine-tune target), static validator, py_trees compiler, plan sampler
 2. `planguard/sim` — world, map features, kinematics, task semantics, stochastic link and wind, scenario randomization, logging, replay
-3. `planguard/coord` — CBBA allocation of the plan's team-level intent to specific aircraft
+3. `planguard/coord` — aircraft allocation. Phase 1 ships a greedy nearest-aircraft placeholder in `allocate.py`; Phase 2 replaces it with CBBA behind the same signature
 4. `planguard/risk` — plan-time features, XGBoost failure-risk surrogate, SHAP, calibration
 5. `planguard/copilot` — dataset generation, QLoRA fine-tune, constrained decoding, LangChain tools, LangGraph approval graph
 6. `planguard/debrief` — mission scoring, experiment figures
@@ -53,6 +53,8 @@ uv run pytest
 uv run ruff check . && uv run mypy planguard
 uv run python -m planguard.dsl.validate tests/golden/cases.yaml      # phase 0 acceptance
 uv run python -m planguard.dsl.validate examples/ridge.json
+uv run python -m planguard.sim.run --plan examples/ridge.json --seed 7 --out runs/demo
+uv run python -m planguard.sim.replay runs/demo                     # text map + timeline
 ```
 
 ## Build order
@@ -61,10 +63,10 @@ Work one phase at a time. Each phase ends with passing tests and its acceptance 
 
 | Phase | Deliverable | Acceptance check |
 |---|---|---|
-| **0** | DSL schema + static validator + golden corpus | 8 checks implemented; ~40 hand-written good/bad plans classified correctly; every rejection carries a code, a JSON path and a hint |
-| **1** | Sim: world, map features, kinematics, task semantics, stochastic link + wind, scenario randomization, logging, replay viewer | Seeded run reproducible bit-for-bit across two processes; a hand-written plan compiles to py_trees and executes to completion; **outcome varies across seeds** — if it does not, Phase 4 is impossible |
+| **0** | DSL schema + static validator + golden corpus | **Done.** 9 checks implemented; 49 hand-written good/bad plans classified correctly; every rejection carries a code, a JSON path and a hint |
+| **1** | Sim: world, map features, kinematics, task semantics, stochastic link + wind, scenario randomization, logging, replay viewer | **Done.** Seeded run reproducible bit-for-bit across two processes; the demo plan compiles to py_trees and executes to completion; outcome varies across seeds, and varies with *execution risk* rather than only aircraft count when the budget is tight |
 | **2** | CBBA allocation + end-to-end execution + mission metrics | CBBA converges with no duplicate or orphaned assignments; mission success / coverage / completion time computed from logs |
-| **3** | Plan sampler + batch harness -> risk dataset | ~2,000 (plan, scenario) pairs x 20 seeds; label = failure rate; split by plan *and* seed |
+| **3** | Plan sampler + batch harness -> risk dataset | ~2,000 (plan, scenario) pairs x 20 seeds; label = failure rate; split by plan *and* seed. **Sample time budgets near the feasibility boundary** — with a loose budget the only thing that decides the outcome is how many aircraft launched, and the risk model learns nothing else. At 555 ms/run the harness needs multiprocessing: 40k runs is 6.2 h on one core |
 | **4** | XGBoost risk surrogate + SHAP + calibration | Beats a "path length over budget" heuristic on held-out plans; **calibration curve reported, not just AUC**; screening speedup measured |
 | **5** | NL dataset: plan-first sampling, verifier filter, back-translation, hand-written held-out set (150-300 items) | Verifier-filter yield rate reported; held-out set authored independently of the templates |
 | **6** | QLoRA fine-tune + constrained decoding + five-arm evaluation | Headline table: base zero-shot / base few-shot / base+constrained / fine-tuned / fine-tuned+constrained, scored on schema-valid %, **validator-pass %**, per-field exact match, task-level F1, **simulated mission success**, repair iterations, prompt tokens, p50/p95 latency. Needs a GPU |
