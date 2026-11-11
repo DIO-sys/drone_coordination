@@ -24,7 +24,7 @@ So the headline metrics are **validator-pass rate** and **simulated mission succ
 
 1. `planguard/dsl` — the mission DSL: Pydantic schema (the fine-tune target), static validator, py_trees compiler, plan sampler
 2. `planguard/sim` — world, map features, kinematics, task semantics, stochastic link and wind, scenario randomization, logging, replay
-3. `planguard/coord` — aircraft allocation. Phase 1 ships a greedy nearest-aircraft placeholder in `allocate.py`; Phase 2 replaces it with CBBA behind the same signature
+3. `planguard/coord` — aircraft allocation. `cbba.py` is the real allocator; `allocate.py` dispatches and keeps the greedy placeholder so the two can be compared on identical seeds
 4. `planguard/risk` — plan-time features, XGBoost failure-risk surrogate, SHAP, calibration
 5. `planguard/copilot` — dataset generation, QLoRA fine-tune, constrained decoding, LangChain tools, LangGraph approval graph
 6. `planguard/debrief` — mission scoring, experiment figures
@@ -63,9 +63,9 @@ Work one phase at a time. Each phase ends with passing tests and its acceptance 
 
 | Phase | Deliverable | Acceptance check |
 |---|---|---|
-| **0** | DSL schema + static validator + golden corpus | **Done.** 9 checks implemented; 49 hand-written good/bad plans classified correctly; every rejection carries a code, a JSON path and a hint |
+| **0** | DSL schema + static validator + golden corpus | **Done.** 9 checks implemented; 50 hand-written good/bad plans classified correctly; every rejection carries a code, a JSON path and a hint |
 | **1** | Sim: world, map features, kinematics, task semantics, stochastic link + wind, scenario randomization, logging, replay viewer | **Done.** Seeded run reproducible bit-for-bit across two processes; the demo plan compiles to py_trees and executes to completion; outcome varies across seeds, and varies with *execution risk* rather than only aircraft count when the budget is tight |
-| **2** | CBBA allocation + end-to-end execution + mission metrics | CBBA converges with no duplicate or orphaned assignments; mission success / coverage / completion time computed from logs |
+| **2** | CBBA allocation + end-to-end execution + mission metrics | **Done.** Consensus converges conflict-free under fuzzed fleet placements and plan shapes; mission metrics reconstructed from logs alone and asserted equal to the live result |
 | **3** | Plan sampler + batch harness -> risk dataset | ~2,000 (plan, scenario) pairs x 20 seeds; label = failure rate; split by plan *and* seed. **Sample time budgets near the feasibility boundary** — with a loose budget the only thing that decides the outcome is how many aircraft launched, and the risk model learns nothing else. At 555 ms/run the harness needs multiprocessing: 40k runs is 6.2 h on one core |
 | **4** | XGBoost risk surrogate + SHAP + calibration | Beats a "path length over budget" heuristic on held-out plans; **calibration curve reported, not just AUC**; screening speedup measured |
 | **5** | NL dataset: plan-first sampling, verifier filter, back-translation, hand-written held-out set (150-300 items) | Verifier-filter yield rate reported; held-out set authored independently of the templates |

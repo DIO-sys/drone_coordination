@@ -60,19 +60,26 @@ def work_s(task: TaskSpec, cfg: WorldConfig) -> float:
     return 0.0  # rally
 
 
-def duration_s(task: TaskSpec, cfg: WorldConfig) -> float:
-    """Travel from base plus sensor work, parallelised across the task's aircraft.
+def per_aircraft_work_s(task: TaskSpec, cfg: WorldConfig) -> float:
+    """Sensor work for one aircraft's share of a task.
 
-    Dwell does not shrink with more aircraft; coverage work does.
+    Dwell does not shrink with more aircraft; coverage work does. Shared with
+    CBBA's scoring so the allocator and the validator cannot drift apart on
+    how long a task takes.
     """
+    work = work_s(task, cfg)
+    if task.kind in ("sweep", "corridor_patrol"):
+        work /= task.aircraft_count
+    return work
+
+
+def duration_s(task: TaskSpec, cfg: WorldConfig) -> float:
+    """Travel from base plus one aircraft's share of the sensor work."""
     feature = cfg.world_map.get(task.target)
     if feature is None:
         return 0.0
     travel_s = dist_m(cfg.base_m, feature.centroid_m) / cfg.fleet.speed_mps
-    work = work_s(task, cfg)
-    if task.kind in ("sweep", "corridor_patrol"):
-        work /= task.aircraft_count
-    return travel_s + work
+    return travel_s + per_aircraft_work_s(task, cfg)
 
 
 def estimate_schedule(plan: MissionPlan, cfg: WorldConfig) -> list[ScheduledTask]:
@@ -278,37 +285,66 @@ def check_dependencies(plan: MissionPlan, cfg: WorldConfig) -> list[ValidationEr
 
 
 def check_fleet_capacity(plan: MissionPlan, cfg: WorldConfig) -> list[ValidationError]:
-    errs: list[ValidationError] = []
+    """Only a *single* task demanding more aircraft than exist is infeasible.
+
+    An earlier version also rejected plans whose peak concurrent demand exceeded
+    the fleet, computed from the unlimited-parallelism schedule. That was a
+    false positive, and it fired on the first five-task plan written for the
+    allocator comparison: five independent tasks with a four-aircraft fleet and
+    a 1500 s budget against a 439 s critical path -- obviously flyable, four
+    aircraft start, the fifth task follows.
+
+    The reason no such check can be sound: ``start_after_s`` is a *lower* bound
+    ("cannot start before") and no task carries a deadline, so nothing ever
+    forces two tasks to overlap. The executive can always sequence them.
+    Concurrent demand therefore can never prove infeasibility.
+
+    False positives are worse than misses here. The Phase 7 repair loop would
+    be told to fix a correct plan, and the only available fix is to invent
+    ``depends_on`` edges that serialise work for no reason. The real signal that
+    was being approximated -- "this fleet cannot get through this much work in
+    time" -- is now a sound lower bound in ``check_time_feasibility``.
+    """
     fleet = cfg.fleet.aircraft_count
-    for i, task in enumerate(plan.tasks):
-        if task.aircraft_count > fleet:
-            errs.append(
-                ValidationError(
-                    code="FLEET_OVERSUBSCRIBED",
-                    path=f"tasks[{i}].aircraft_count",
-                    message=(
-                        f"task {task.id!r} asks for {task.aircraft_count} aircraft but the "
-                        f"fleet has {fleet}"
-                    ),
-                    hint=f"reduce aircraft_count to at most {fleet}",
-                )
-            )
-    if errs:
-        return errs
-    peak, at_s = peak_concurrency(estimate_schedule(plan, cfg))
-    if peak > fleet:
-        errs.append(
-            ValidationError(
-                code="PEAK_CONCURRENCY_EXCEEDED",
-                path="tasks[].aircraft_count",
-                message=(
-                    f"{peak} aircraft are needed simultaneously at t={at_s:.0f}s but the "
-                    f"fleet has {fleet}"
-                ),
-                hint="sequence tasks with depends_on, or lower aircraft_count",
-            )
+    return [
+        ValidationError(
+            code="FLEET_OVERSUBSCRIBED",
+            path=f"tasks[{i}].aircraft_count",
+            message=(
+                f"task {task.id!r} asks for {task.aircraft_count} aircraft but the "
+                f"fleet has {fleet}"
+            ),
+            hint=f"reduce aircraft_count to at most {fleet}",
         )
-    return errs
+        for i, task in enumerate(plan.tasks)
+        if task.aircraft_count > fleet
+    ]
+
+
+def makespan_lower_bound_s(plan: MissionPlan, cfg: WorldConfig) -> tuple[float, str]:
+    """A sound lower bound on how long the plan must take, and which term binds.
+
+    Two independent bounds, both valid whatever the executive does:
+
+    * **critical path** -- the dependency chain, costed with unlimited aircraft.
+    * **work conservation** -- total sensor work divided by the fleet size. No
+      schedule can beat it, because the work has to be done by somebody. Travel
+      is deliberately excluded: an aircraft flying two tasks in sequence does
+      not pay travel-from-base twice, so including it would overestimate and
+      reintroduce false positives.
+
+    The larger of the two is still a lower bound, so the check stays one-sided:
+    exceeding it proves infeasibility, fitting inside it proves nothing.
+    """
+    schedule = estimate_schedule(plan, cfg)
+    critical_s = max((s.end_s for s in schedule), default=0.0)
+    total_work_s = sum(work_s(task, cfg) for task in plan.tasks)
+    fleet_s = total_work_s / cfg.fleet.aircraft_count
+    return (
+        (critical_s, "critical path")
+        if critical_s >= fleet_s
+        else (fleet_s, "total work spread across the fleet")
+    )
 
 
 def check_time_feasibility(plan: MissionPlan, cfg: WorldConfig) -> list[ValidationError]:
@@ -326,17 +362,16 @@ def check_time_feasibility(plan: MissionPlan, cfg: WorldConfig) -> list[Validati
                     hint="lower start_after_s or raise time_budget_s",
                 )
             )
-    schedule = estimate_schedule(plan, cfg)
-    makespan = max((s.end_s for s in schedule), default=0.0)
-    needed = makespan * cfg.validator.time_estimate_slack
+    bound_s, binding = makespan_lower_bound_s(plan, cfg)
+    needed = bound_s * cfg.validator.time_estimate_slack
     if needed > plan.time_budget_s:
         errs.append(
             ValidationError(
                 code="TIME_BUDGET_EXCEEDED",
                 path="time_budget_s",
                 message=(
-                    f"the plan needs at least {needed:.0f}s even with unlimited parallelism, "
-                    f"but the budget is {plan.time_budget_s:.0f}s"
+                    f"the plan needs at least {needed:.0f}s ({binding}) but the budget is "
+                    f"{plan.time_budget_s:.0f}s"
                 ),
                 hint="raise time_budget_s, drop a task, or add aircraft to the slow tasks",
             )
@@ -439,7 +474,9 @@ CHECKS = (
     check_fallback_targets,
 )
 #: Checks that need a schedulable plan, and so are skipped after a blocking error.
-NEEDS_SCHEDULE = frozenset({"fleet_capacity", "time_feasibility"})
+#: ``fleet_capacity`` left this set when its concurrency half was removed -- it
+#: no longer builds a schedule.
+NEEDS_SCHEDULE = frozenset({"time_feasibility"})
 
 
 def validate(plan: MissionPlan, cfg: WorldConfig) -> ValidationReport:

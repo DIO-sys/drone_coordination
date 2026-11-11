@@ -245,9 +245,13 @@ class World:
                 break
 
         t_end_s = ticks * self.cfg.sim.dt_s
-        for task_id, st in self.status.items():
+        for task_id, st in sorted(self.status.items()):
             if st in ("pending", "active"):
                 self.status[task_id] = "failed"
+                if self.logger:
+                    # debrief reads only the logs, so a task that simply ran out
+                    # of time has to leave a record of its own
+                    self.logger.event(t_end_s, "task_failed", task_id=task_id, reason="timeout")
 
         # Success is all-or-nothing: every task completed and no aircraft lost.
         # An earlier version only required priority-1 tasks, which reported
@@ -258,7 +262,13 @@ class World:
         success = all(s == "done" for s in self.status.values()) and grounded == 0
 
         if self.logger:
-            self.logger.event(t_end_s, "mission_end", success=success)
+            self.logger.event(
+                t_end_s,
+                "mission_end",
+                success=success,
+                task_status=dict(sorted(self.status.items())),
+                task_progress={k: round(v, 4) for k, v in sorted(self.progress.items())},
+            )
             self.logger.write()
 
         wind = self.scenario.wind_mps

@@ -1,0 +1,15 @@
+{
+  "name": "five jobs, one fleet",
+  "rationale": "More tasks than aircraft, spread across the map, so allocation order decides how much gets done. This is where a myopic nearest-first assignment and a bundled auction can disagree.",
+  "time_budget_s": 1500,
+  "tasks": [
+    {"id": "sweep_valley", "kind": "sweep", "target": "south_valley", "priority": 2},
+    {"id": "sweep_east", "kind": "sweep", "target": "east_sector", "priority": 2},
+    {"id": "patrol_river", "kind": "corridor_patrol", "target": "river_corridor", "priority": 2},
+    {"id": "patrol_highway", "kind": "corridor_patrol", "target": "highway_corridor", "priority": 3},
+    {"id": "hold_relay", "kind": "station_keep", "target": "relay_hill", "dwell_s": 240, "priority": 1}
+  ],
+  "fallbacks": [
+    {"trigger": "low_fuel", "action": "return_to_rally", "rally_point": "rally_alpha"}
+  ]
+}

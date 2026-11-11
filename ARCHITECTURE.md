@@ -77,7 +77,7 @@ silently ignored data.
 ### The validator (`dsl/validate.py`) — the spine
 
 Built first, because the Phase 5 dataset filter, the Phase 7 repair loop and the headline
-metric all depend on it. **Nine checks, 15 error codes**, none expressible as a JSON
+metric all depend on it. **Nine checks, 14 error codes**, none expressible as a JSON
 Schema constraint:
 
 | Check | Catches |
@@ -86,7 +86,7 @@ Schema constraint:
 `feature_refs` | unknown map features; a task kind targeting the wrong feature *kind* |
 `required_fields` | `station_keep` without `dwell_s`; `return_to_rally` without a rally point |
 `dependencies` | dangling refs, self-dependency, cycles |
-`fleet_capacity` | a task asking for more aircraft than exist; **peak concurrent demand** |
+`fleet_capacity` | a task asking for more aircraft than exist |
 `time_feasibility` | work that cannot fit the budget; a start time past the budget |
 `link_fallbacks` | a link-dependent task with no `link_lost` recovery |
 `link_reachability` | a link-dependent task whose target lies outside link range |
@@ -251,15 +251,119 @@ risk model and the debrief read **only** from these files, never from live simul
 objects. Logging is optional (`logger=None`) because the Phase 3 harness runs tens of
 thousands of simulations and needs only summaries.
 
-## 4. Allocation (`planguard/coord/`) — phase 2, in progress
+## 4. Allocation (`planguard/coord/`) — phase 2, done
 
 Per rule 7 a plan expresses **team-level intent** and never names aircraft, so allocation
-happens here and only here. Phase 1 shipped a greedy nearest-aircraft placeholder; Phase 2
-replaces it with CBBA behind the same `allocate` signature, so swapping it in does not
-touch the tick loop.
+happens here and only here. `allocate.py` dispatches on `cfg.cbba.allocator` between CBBA
+and the Phase 1 greedy placeholder; the tick loop does not know which ran.
 
-The placeholder refuses to **part-staff** a task: a half-crewed sweep would silently take
+Both allocators refuse to **part-staff** a task: a half-crewed sweep would silently take
 twice as long and corrupt the time-margin signal Phase 4 learns from.
+
+### CBBA (`coord/cbba.py`)
+
+Consensus-Based Bundle Algorithm (Choi, Brunet & How, 2009). Each aircraft builds a bundle
+of tasks it wants by marginal score, then aircraft exchange winning-bid vectors and resolve
+conflicts with a fixed rule table. Each agent reasons only from vectors it has received —
+`AgentState` holds nothing global.
+
+**Multi-aircraft tasks become slots.** CBBA assigns one task to one agent, so a task asking
+for two aircraft expands into `sweep_ridge#0` and `sweep_ridge#1` and consensus runs over
+slots. An agent may never hold two slots of the same task — one aircraft cannot be two
+aircraft.
+
+**Diminishing marginal gains comes from time discounting.** A path scores
+`Σ value · discount^arrival_time_s`. Inserting a task can only delay those after it, so
+adding to a longer bundle is worth less — which is the property CBBA's convergence proof
+requires. Without DMG the algorithm is not guaranteed to terminate at all.
+
+**Exchange is simultaneous within a round.** Every agent resolves against snapshots taken
+before any update in that round, so the outcome cannot depend on agent iteration order.
+
+**Releasing a bundle entry cascades.** When an agent loses a slot, it drops that slot *and
+everything added after it*. Later entries' bids were computed assuming the earlier ones
+were held, so they are stale. Skipping the cascade is the classic route to bids that never
+settle.
+
+**The message exchange is simulated, not distributed.** `run_consensus` drives rounds
+in-process. The algorithm is faithful, but this is a single-process simulation of a
+decentralised protocol, not a deployment of one.
+
+#### The published rule table has a tie-breaking gap
+
+Choi et al.'s Table 1 compares bids with strict inequality and does not say what happens
+when two bids are exactly equal, because it assumes bids are in general position. They are
+not: **two aircraft at the same position produce bit-identical bids.** Then neither can
+outbid the other, both sides keep the slot, nothing changes, and consensus reports
+convergence while holding a duplicate assignment — precisely the failure the Phase 2
+acceptance check exists to catch.
+
+`claim_beats` adds an **antisymmetric** tie-break: higher bid wins, and on an exact tie the
+lower agent id wins. Antisymmetry is the requirement — if d0 and d1 tie, d0 must win from
+*both* points of view, or the slot ping-pongs forever. Found by the property test with two
+aircraft at (0, 0).
+
+#### Only the first task of each bundle is committed
+
+CBBA plans a whole bundle; the simulator flies one task per aircraft at a time. Committing a
+bundle of three would have had the tick loop create three runs for one aircraft and silently
+keep the last. Found by the property test: one aircraft and two single-aircraft tasks
+produced a correct bundle of two that the executive could not execute.
+
+So `commit()` takes each aircraft's first task in path order. The rest of the bundle is not
+wasted — it still shapes the bids, since an agent's bid for its first task already accounts
+for what it intends to fly next, which is where CBBA's sequencing value lives — and
+consensus simply reruns next tick as aircraft free up. This is CBBA as a receding-horizon
+planner with incremental commitment, which is also the honest way to handle tasks that
+become ready over time, something CBBA's static guarantees do not cover.
+
+### Was CBBA worth implementing?
+
+The greedy allocator was kept rather than deleted so this is a measurement, not an
+assertion. `experiments/compare_allocators.py` runs both on identical seeds and reports the
+**paired** per-seed difference with a bootstrap confidence interval.
+
+Pairing is not a nicety here. Scenario variance is large (one to four aircraft launch), so
+an unpaired comparison of two means at n=30 cannot resolve a 5% effect — the first run of
+that script showed success rates differing by exactly one run in thirty, in opposite
+directions at two budgets, which is noise presented as a finding. A bootstrap CI is used
+rather than a t-test because success is Bernoulli and makespan is bounded and skewed by the
+budget cap.
+
+Results are in §10.
+
+## 4a. The concurrency check that had to be removed
+
+Writing the five-task plan for the allocator comparison immediately tripped
+`PEAK_CONCURRENCY_EXCEEDED`: five independent tasks, a fleet of four. The plan was
+obviously flyable — a 439 s critical path against a 1500 s budget, four aircraft start and
+the fifth task follows. **The validator was wrong.**
+
+The reason no such check can be sound: `start_after_s` is a *lower* bound ("cannot start
+before") and no task carries a deadline, so nothing in the DSL ever forces two tasks to
+overlap. The executive can always sequence them, and concurrent demand therefore cannot
+prove infeasibility.
+
+False positives are worse than misses in this system. The Phase 7 repair loop would be
+handed a correct plan and told to fix it, and the only available fix is inventing
+`depends_on` edges that serialise work for no reason — the model would learn to produce
+worse plans to satisfy a broken check.
+
+The real signal being approximated — "this fleet cannot get through this much work in
+time" — is now a sound lower bound in `check_time_feasibility`:
+
+```
+makespan ≥ max( critical path with unlimited aircraft,
+                total sensor work / fleet size )
+```
+
+Both terms are valid lower bounds whatever the executive does, so the larger of the two is
+still one-sided. Travel is deliberately excluded from the work term: an aircraft flying two
+tasks in sequence does not pay travel-from-base twice, so including it would overestimate
+and reintroduce the false positives.
+
+Net effect: 9 checks still, 14 error codes instead of 15, and the validator no longer
+rejects feasible plans.
 
 ## 5. Risk surrogate (`planguard/risk/`) — phase 4
 
@@ -311,6 +415,17 @@ in a config file that could have been computed is a bug.
 Blocks: `WorldMap`, `FleetSpec`, `SimConfig`, `LinkConfig`, `WindConfig`,
 `BehaviourConfig`, `ScenarioConfig`, `ValidatorConfig`.
 
+## 7a. Debrief (`planguard/debrief/`)
+
+`metrics.py` reconstructs mission outcome from `drones.parquet` and `events.jsonl` and
+nothing else. A test asserts those numbers equal the live `RunResult` for the same run.
+
+That test immediately found an incomplete log: a task that simply ran out of time was
+marked failed in memory with nothing written to say so, so the debrief disagreed with the
+simulator. Timeouts now emit a `task_failed` event, and `mission_end` carries the final
+per-task status and progress. Phase 3 builds its dataset from stored runs, so anything the
+debrief cannot reconstruct does not exist as far as the risk model is concerned.
+
 ## 8. Performance
 
 555 ms per 1200 s mission with 4 aircraft (~39k aircraft-ticks/s). Phase 3's 40,000 runs is
@@ -330,3 +445,50 @@ Stated here and repeated in `RESULTS.md`; never hidden.
   set mitigates but does not eliminate the circularity.
 - NL-to-config copilots are a crowded space. The differentiator is the verifier-in-the-loop
   architecture and the E3 ablation, which must be foregrounded.
+- **CBBA's message exchange is simulated in-process**, so nothing here demonstrates
+  robustness to dropped or delayed consensus messages. The algorithm is faithful; the
+  distribution is not.
+- **Only the first task of each CBBA bundle is committed**, so the deeper sequencing value
+  CBBA can express is reflected only through its effect on bids.
+
+## 10. Measured results so far
+
+Re-measure before editing these; do not retype from memory.
+
+**Tests:** 200 passing. 50 golden validator cases: 15 valid, 28 rejected by the validator,
+7 rejected by the schema before the validator runs. 9 validator checks, 14 error codes.
+
+**Simulator:** 555 ms per 1200 s / 4-aircraft mission. Steady-state link availability
+0.96196 at the default hazard rates, matched by the simulator to three decimals.
+
+**Feasibility boundary** (`examples/contested.json`, 5 tasks, fleet of 4, n=80 seeds,
+restricted to runs where at least 3 aircraft launched):
+
+| budget | success | mean completed |
+|---|---|---|
+| 650 s | 0.84 | 0.919 |
+| 700 s | 0.97 | 0.986 |
+| 750 s | 1.00 | 1.000 |
+| 800 s and above | 1.00 | 1.000 |
+
+The cliff is between 650 s and 750 s. Phase 3 must sample budgets in that band: above it
+every run succeeds and the risk model has no signal to learn.
+
+**CBBA vs greedy** (`experiments/compare_allocators.py`, same plan, budget 1500 s, n=150
+paired seeds, 95% bootstrap CI on the per-seed difference):
+
+| metric | greedy | cbba | paired difference (cbba − greedy) | verdict |
+|---|---|---|---|---|
+| success rate | 0.98 | 0.99 | +0.007 [+0.000, +0.020] | no detectable difference |
+| completed fraction | 0.996 | 0.997 | +0.001 [+0.000, +0.004] | no detectable difference |
+| makespan | 599 s | 579 s | −20.0 s [−29.1, −11.0] | **difference detected** |
+
+On `examples/ridge.json` the two allocators are **byte-identical**: two tasks and
+distance-dominated bids, so CBBA converges on the same nearest-aircraft answer.
+
+Honest reading: **CBBA buys no measurable success-rate improvement on these plans.** With a
+budget this loose, success is decided by how many aircraft launched, not by who flies what.
+The real and repeatable effect is a **~3% shorter makespan** — CBBA sequences each
+aircraft's tasks instead of committing greedily task-by-task. That margin should matter more
+at tight budgets, where it converts into success; demonstrating that is Phase 3 work, since
+it needs the feasibility-boundary sweep above run against both allocators.

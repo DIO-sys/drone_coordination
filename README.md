@@ -28,8 +28,8 @@ fine-tune lose, and a negative result gets published as one.
 |---|---|---|
 | 0 | Mission DSL + 9-check static validator + golden corpus | **done** |
 | 1 | Simulator, behaviour trees, scenario randomisation, replay | **done** |
-| 2 | CBBA task allocation | in progress |
-| 3 | Plan sampler + batch harness -> risk dataset | |
+| 2 | CBBA task allocation + mission metrics from logs | **done** |
+| 3 | Plan sampler + batch harness -> risk dataset | in progress |
 | 4 | XGBoost risk surrogate + SHAP + calibration | |
 | 5 | Natural-language dataset (plan-first, verifier-filtered) | |
 | 6 | QLoRA fine-tune + constrained decoding + five-arm evaluation | |
@@ -37,7 +37,7 @@ fine-tune lose, and a negative result gets published as one.
 | 8 | FastAPI + dashboard | |
 | 9 | `RESULTS.md` + demo GIF | |
 
-Current: **167 tests**, 49 golden validator cases, ruff and mypy --strict clean.
+Current: **200 tests**, 50 golden validator cases (15 valid, 35 rejected), ruff and mypy --strict clean.
 
 ## Quickstart
 
@@ -54,6 +54,9 @@ uv run python -m planguard.sim.run --plan examples/ridge.json --seed 7 --out run
 
 # text map, time in each mode, event timeline
 uv run python -m planguard.sim.replay runs/demo
+
+# does CBBA actually beat the greedy placeholder? paired, same seeds
+uv run python -m experiments.compare_allocators --plan examples/contested.json --seeds 150
 ```
 
 A plan is always validated before it is simulated. Simulating an invalid plan would
@@ -65,13 +68,13 @@ produce a risk label for something that could never be flown.
 planguard/
   dsl/        mission DSL: schema (the fine-tune target), validator, py_trees compiler
   sim/        world, kinematics, task semantics, link model, scenarios, logging, replay
-  coord/      aircraft allocation (CBBA; a greedy placeholder until phase 2)
+  coord/      aircraft allocation: CBBA, plus the greedy placeholder for comparison
   risk/       plan-time features, XGBoost failure-risk surrogate, SHAP   [phase 4]
   copilot/    dataset gen, QLoRA fine-tune, constrained decoding, LangGraph  [phases 5-7]
   debrief/    mission scoring, experiment figures
   api/        FastAPI + WebSocket                                        [phase 8]
 experiments/  world config, feasibility and evaluation harnesses
-examples/     hand-written plans
+examples/     hand-written plans (ridge.json, contested.json)
 tests/golden/ the validator's golden corpus
 ```
 

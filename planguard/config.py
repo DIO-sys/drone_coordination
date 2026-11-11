@@ -199,6 +199,28 @@ class BehaviourConfig(BaseModel):
     max_handoffs: int = Field(default=2, ge=0)
 
 
+class CbbaConfig(BaseModel):
+    """Consensus-Based Bundle Algorithm parameters."""
+
+    model_config = ConfigDict(frozen=True)
+
+    #: Which allocator the simulator uses. "greedy" is the Phase 1 placeholder,
+    #: kept so the two can be compared on identical scenarios.
+    allocator: Literal["cbba", "greedy"] = "cbba"
+    #: Maximum tasks one aircraft will carry in its bundle (L in the paper).
+    max_bundle: int = Field(default=3, ge=1)
+    #: Reward discount per second of arrival delay. CBBA's convergence proof
+    #: needs diminishing marginal gains; a time-discounted reward provides it,
+    #: because inserting a task can only delay the ones after it.
+    discount_per_s: float = Field(default=0.999, gt=0, le=1)
+    #: A bid must beat the standing bid by this much to displace it, which
+    #: stops float noise from causing endless bid trading.
+    bid_epsilon: float = Field(default=1e-9, ge=0)
+    #: Hard cap on consensus rounds. CBBA converges in at most N*L rounds under
+    #: full connectivity; exceeding this is a bug, not a slow case.
+    max_rounds: int = Field(default=200, ge=1)
+
+
 class ScenarioConfig(BaseModel):
     """Per-seed randomisation. This is where the simulator's variance comes from,
     and Phase 4 is impossible without it."""
@@ -232,6 +254,7 @@ class WorldConfig(BaseModel):
     link: LinkConfig = LinkConfig()
     wind: WindConfig = WindConfig()
     behaviour: BehaviourConfig = BehaviourConfig()
+    cbba: CbbaConfig = CbbaConfig()
     scenario: ScenarioConfig = ScenarioConfig()
     validator: ValidatorConfig = ValidatorConfig()
 

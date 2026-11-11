@@ -136,13 +136,24 @@ unique ids | two tasks called the same thing? | — |
 feature refs | does that place exist, and is it the right *kind*? | the map |
 required fields | `station_keep` without a dwell time? | task semantics |
 dependencies | dangling reference, self-reference, deadlock? | graph theory |
-fleet capacity | more aircraft needed at once than exist? | the fleet, *and a schedule* |
+fleet capacity | one task needing more aircraft than exist? | the fleet |
 time feasibility | can this fit the budget at all? | speeds, distances, a schedule |
 link fallbacks | link-dependent task with no recovery plan? | task semantics |
 link reachability | needs a link, but outside radio range? | the map and the radio |
 fallback targets | recovery rule naming a task that doesn't exist? | — |
 
 Three things about it are worth more than the list:
+
+**It had to lose a check to stay honest.** An earlier version also rejected plans whose
+*concurrent* demand exceeded the fleet — five jobs, four aircraft. That looked sensible and
+was wrong: nothing in the DSL ever forces two tasks to happen at the same time, so four
+aircraft can simply do four jobs and then the fifth. The check rejected a perfectly flyable
+plan. That is worse than missing a bad one, because in Phase 7 the model would be handed a
+correct plan, told to fix it, and the only available fix is to invent dependencies that
+serialise the work for no reason — it would learn to write worse plans to please a broken
+check. The sound version of the same intuition is now folded into the time check: total
+sensor work divided by fleet size is a lower bound on how long the mission takes, whatever
+order things happen in.
 
 **It is honest about what it does not know.** The time check assumes *unlimited* aircraft.
 So if the plan overruns even then, it is definitely infeasible — but fitting inside the
@@ -284,33 +295,106 @@ scheduled *by tick number*.
 Neither bug would ever have raised an error. Both would have silently biased every number
 produced downstream.
 
-## 7. Assigning aircraft to tasks — CBBA (Phase 2)
+### Reading the mission back from the logs (the debrief)
+
+The simulator knows how the mission went while it is running. But Phase 3 needs to score
+*forty thousand* missions that have already finished, from files on disk. So
+`planguard/debrief/metrics.py` reconstructs the outcome from the two log files alone —
+one row per aircraft per tick, one row per event — and a test asserts its numbers equal
+the live result for the same run.
+
+Writing that test immediately found a hole. A task that simply ran out of time was marked
+failed in memory, and *nothing was written to the log to say so*: the simulator and the
+debrief disagreed. The rule it establishes is the one Phase 3 depends on — anything the
+logs cannot reconstruct does not exist, as far as the risk model is concerned.
+
+## 7. Assigning aircraft to tasks — CBBA (Phase 2, done)
 
 The plan says "two aircraft sweep the ridge". Something must decide *which* two.
 
 Phase 1 used the obvious greedy rule: whichever idle aircraft are nearest. It works, and it
-is a placeholder, marked as such in the code.
+is still in the codebase — not as dead weight, but as the control group. If CBBA cannot beat
+it on identical seeds, that is worth knowing and worth saying.
 
-**CBBA** — Consensus-Based Bundle Algorithm — is the real thing. The idea is an auction:
+**CBBA** — Consensus-Based Bundle Algorithm — is an auction:
 
 1. **Bundle building.** Each aircraft privately works out how much it "wants" each task —
-   a score based mainly on how far it would have to fly — and builds a small bundle of the
-   tasks it wants most.
-2. **Consensus.** Aircraft exchange their bids. Where two want the same task, a fixed rule
-   table decides the winner using the bid values and timestamps. Losers drop that task and
-   rebuild.
+   a score based mainly on how far it would have to fly — and builds a small bundle (up to
+   three) of the tasks it wants most, in the order it would fly them.
+2. **Consensus.** Aircraft exchange their best-bid-per-task vectors. Where two want the same
+   task, a fixed rule table decides the winner from the bid values and who heard what when.
+   Losers drop that task and rebuild.
 
 Repeat until nobody changes their mind. The appeal is that it is **decentralised**: no
-central allocator, each aircraft reasons from what it has heard, and the algorithm provably
-converges to a conflict-free assignment. That is the property you want when aircraft are
-spread out and may not all hear each other.
+central allocator, each aircraft reasons only from what it has heard, and the algorithm
+provably converges to a conflict-free assignment. That is the property you want when
+aircraft are spread out and may not all hear each other.
 
-Why bother, given greedy works? Because greedy is centrally computed and assumes perfect
-knowledge — and that is exactly the assumption that fails in the field. CBBA is what you
-reach for when it does. One honest caveat: CBBA's convergence guarantees assume
-eventually-reliable communication and a fixed task list, and this project has neither
-(tasks appear as dependencies clear, and links drop). Characterising *where* those
-guarantees break is more interesting than implementing the happy path.
+### Three things that had to be worked out, not copied
+
+**A task wanting two aircraft doesn't fit the algorithm.** CBBA assigns one task to one
+agent. So `sweep_ridge` with `aircraft_count: 2` is expanded into two *slots*,
+`sweep_ridge#0` and `sweep_ridge#1`, and the auction runs over slots. One extra rule: an
+aircraft may never win two slots of the same task, because one aircraft cannot be two
+aircraft.
+
+**The score has to shrink as the bundle grows.** CBBA's convergence proof requires
+*diminishing marginal gains*: the fourth task you add must be worth no more than the third.
+This is enforced by discounting each task's value by how late you would arrive
+(`value × 0.999^arrival_seconds`). Inserting a task can only push the later ones further
+out, so a longer bundle really does make each addition worth less. Without this the
+algorithm is not merely suboptimal — it may never stop trading bids.
+
+**The published rule table has a hole, and a property test found it.** The paper compares
+bids with strict `>` and never says what happens on an exact tie, because it assumes bids
+are never exactly equal. They are: put two aircraft at the same coordinates and they compute
+*bit-identical* bids. Then neither can outbid the other, both keep the slot, and the
+algorithm reports "converged, conflict-free" while holding a duplicate assignment —
+precisely the thing it exists to prevent. The fix is a tie-break that is **antisymmetric**:
+higher bid wins, and on an exact tie the lower aircraft id wins. Antisymmetry is the whole
+point — if d0 and d1 tie, d0 must win when d0 evaluates it *and* when d1 evaluates it, or
+the slot ping-pongs between them forever.
+
+A fourth, smaller one: CBBA hands back a bundle of three tasks per aircraft, but the
+simulator flies one task per aircraft at a time. Committing the whole bundle had the tick
+loop create three flights for one aircraft and silently keep the last. So only each
+aircraft's *first* task is committed, and consensus simply runs again when aircraft free up.
+The rest of the bundle still does work — an aircraft's bid for its first task already
+accounts for what it plans to fly next, which is where the sequencing value lives.
+
+### Was it worth it? (the honest answer)
+
+Both allocators were run on 150 identical scenario seeds and the per-seed difference
+measured with a bootstrap confidence interval:
+
+| metric | greedy | cbba | difference |
+|---|---|---|---|
+| success rate | 0.98 | 0.99 | +0.007, CI includes zero — **no real difference** |
+| makespan | 599 s | 579 s | −20 s, CI [−29, −11] — **real** |
+
+And on the two-task demo plan the two allocators produce **byte-identical** output.
+
+So: **CBBA buys no measurable improvement in mission success on these plans.** With a
+generous time budget, what decides success is how many aircraft managed to launch, not who
+flies what. The effect that is real and repeatable is a **~3% shorter makespan**, because
+CBBA plans each aircraft's sequence instead of committing one task at a time.
+
+This is the sort of result worth reporting rather than burying. The comparison was built
+*before* knowing the answer, with pairing and confidence intervals, specifically so a null
+result would be legible as a null result — the first version of this comparison used 30
+seeds and showed CBBA "better" at one budget and "worse" at another, differing by a single
+run out of thirty in each direction. That is noise, and it is exactly what an unpaired
+comparison at small n looks like when it is about to be mistaken for a finding.
+
+Where CBBA should pay off is at budgets near the feasibility cliff, where 20 seconds of
+makespan is the difference between finishing and not. Testing that needs the Phase 3 sweep.
+
+One standing caveat: the message exchange here is *simulated in-process*. The algorithm is
+faithful, but nothing in this project yet shows it surviving dropped or delayed consensus
+messages — and CBBA's guarantees also assume a fixed task list, which this project does not
+have (tasks become available as dependencies clear). Characterising where those guarantees
+break is more interesting than implementing the happy path, and is named as a limitation
+rather than glossed.
 
 ## 8. The machine-learning pieces
 

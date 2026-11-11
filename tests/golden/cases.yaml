@@ -266,10 +266,13 @@ cases:
       tasks:
         - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 5}
 
-  - name: peak_concurrency_exceeded
-    expect: [PEAK_CONCURRENCY_EXCEEDED]
+  # Four tasks wanting five aircraft at once from a fleet of four. This used to
+  # be rejected as PEAK_CONCURRENCY_EXCEEDED, which was a false positive: the
+  # executive can sequence them, and nothing in the DSL forces an overlap.
+  - name: more_concurrent_demand_than_fleet_is_still_sequenceable
+    expect: []
     plan:
-      name: five aircraft at once from a fleet of four
+      name: four tasks, four aircraft, sequenced by the executive
       time_budget_s: 1200
       tasks:
         - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
@@ -369,6 +372,17 @@ cases:
         - {id: t1, kind: station_keep, target: bridge}
       fallbacks:
         - {trigger: low_fuel, action: loiter, applies_to: [nonexistent]}
+
+  - name: fleet_cannot_get_through_the_work_in_time
+    expect: [TIME_BUDGET_EXCEEDED]
+    plan:
+      name: too much work for four aircraft
+      time_budget_s: 420
+      tasks:
+        - {id: sweep_ridge, kind: sweep, target: north_ridge, aircraft_count: 2}
+        - {id: hold_bridge, kind: station_keep, target: bridge, dwell_s: 600}
+        - {id: sweep_valley, kind: sweep, target: south_valley}
+        - {id: sweep_east, kind: sweep, target: east_sector}
 
   - name: link_required_beyond_range
     expect: [LINK_RANGE_UNREACHABLE]

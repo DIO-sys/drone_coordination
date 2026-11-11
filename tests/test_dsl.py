@@ -19,6 +19,7 @@ from planguard.dsl.validate import (
     NEEDS_SCHEDULE,
     ScheduledTask,
     estimate_schedule,
+    makespan_lower_bound_s,
     peak_concurrency,
     validate,
 )
@@ -138,7 +139,48 @@ def test_blocking_error_skips_the_schedule_checks(cfg: WorldConfig) -> None:
     )
     report = validate(plan, cfg)
     assert report.codes == ["DEPENDENCY_CYCLE"]
-    assert report.skipped_checks == ["fleet_capacity", "time_feasibility"]
+    assert report.skipped_checks == ["time_feasibility"]
+
+
+def test_time_bound_is_the_larger_of_two_sound_lower_bounds(cfg: WorldConfig) -> None:
+    """Critical path and work-conservation bind in different regimes, and both
+    are valid whatever the executive does."""
+    plan = MissionPlan.model_validate(
+        {
+            "name": "x",
+            "time_budget_s": 100_000,
+            "tasks": [
+                {"id": "a", "kind": "sweep", "target": "south_valley"},
+                {"id": "b", "kind": "sweep", "target": "east_sector"},
+                {"id": "c", "kind": "corridor_patrol", "target": "river_corridor"},
+                {"id": "d", "kind": "corridor_patrol", "target": "highway_corridor"},
+            ],
+        }
+    )
+    big_fleet = cfg.model_copy(update={"fleet": cfg.fleet.model_copy(update={"aircraft_count": 4})})
+    bound, binding = makespan_lower_bound_s(plan, big_fleet)
+    assert binding == "critical path"
+
+    one_aircraft = cfg.model_copy(
+        update={"fleet": cfg.fleet.model_copy(update={"aircraft_count": 1})}
+    )
+    bound_1, binding_1 = makespan_lower_bound_s(plan, one_aircraft)
+    assert binding_1 == "total work spread across the fleet"
+    assert bound_1 > bound, "a smaller fleet cannot lower the bound"
+
+
+def test_concurrent_demand_alone_is_never_an_error(cfg: WorldConfig) -> None:
+    """Regression: four tasks wanting five aircraft at once from a fleet of four
+    is sequenceable, and rejecting it told the repair loop to invent
+    dependencies that serialise work for no reason."""
+    plan = MissionPlan.model_validate(
+        next(
+            c
+            for c in CASES
+            if c["name"] == "more_concurrent_demand_than_fleet_is_still_sequenceable"
+        )["plan"]
+    )
+    assert validate(plan, cfg).ok
 
 
 def test_clean_plan_skips_nothing(cfg: WorldConfig) -> None:
@@ -195,7 +237,11 @@ def test_schedule_honours_start_after(cfg: WorldConfig) -> None:
 def test_schedule_order_is_deterministic(cfg: WorldConfig) -> None:
     """Rule 5: sorted iteration everywhere, so repeated calls are identical."""
     plan = MissionPlan.model_validate(
-        next(c for c in CASES if c["name"] == "peak_concurrency_exceeded")["plan"]
+        next(
+            c
+            for c in CASES
+            if c["name"] == "more_concurrent_demand_than_fleet_is_still_sequenceable"
+        )["plan"]
     )
     runs = [estimate_schedule(plan, cfg) for _ in range(5)]
     assert all(r == runs[0] for r in runs)
