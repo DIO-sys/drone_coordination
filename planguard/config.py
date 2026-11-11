@@ -113,10 +113,76 @@ class FleetSpec(BaseModel):
     speed_mps: float = Field(gt=0)
     sensor_swath_m: float = Field(gt=0)
     base_feature: str
+    #: Airborne endurance. Without this the DSL's low_fuel fallback trigger
+    #: could never fire.
+    endurance_s: float = Field(default=2400.0, gt=0)
+    #: A fixed-wing aircraft at 30 m/s in a 30 degree bank turns at
+    #: v / (v^2 / (g tan phi)) ~= 11 deg/s, so 15 is a mild upper bound.
+    max_turn_rate_dps: float = Field(default=15.0, gt=0)
 
     @property
     def max_concurrent_aircraft(self) -> int:
         return self.aircraft_count
+
+    @property
+    def max_turn_rate_rps(self) -> float:
+        return math.radians(self.max_turn_rate_dps)
+
+    @property
+    def turn_radius_m(self) -> float:
+        """Minimum turn radius implied by speed and turn rate."""
+        return self.speed_mps / self.max_turn_rate_rps
+
+
+class LinkConfig(BaseModel):
+    """Abstract link availability.
+
+    Deliberately *not* an RF model — see the scope section of CLAUDE.md. Beyond
+    ``range_m`` the link is down; inside it, availability is a two-state Markov
+    process. This is the simulator's main source of aleatoric variation, which
+    Phase 4's risk surrogate needs in order to have anything to predict.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    range_m: float = Field(default=6000.0, gt=0)
+    #: Probability per second of an in-range link dropping / recovering.
+    p_drop_per_s: float = Field(default=0.02, ge=0, le=1)
+    p_recover_per_s: float = Field(default=0.4, ge=0, le=1)
+
+    def p_per_tick(self, p_per_s: float, dt_s: float) -> float:
+        """Convert a per-second hazard to a per-tick probability.
+
+        ``1 - (1 - p)**dt`` rather than ``p * dt`` so the drop rate does not
+        depend on the timestep.
+        """
+        return float(1.0 - (1.0 - p_per_s) ** dt_s)
+
+
+class WindConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    #: Mean wind speed; the scenario randomiser draws per-run values around it.
+    speed_mps: float = Field(default=0.0, ge=0)
+    direction_deg: float = Field(default=0.0, ge=0, lt=360)
+    speed_sigma_mps: float = Field(default=2.0, ge=0)
+
+    @property
+    def vector_mps(self) -> tuple[float, float]:
+        theta = math.radians(self.direction_deg)
+        return (self.speed_mps * math.cos(theta), self.speed_mps * math.sin(theta))
+
+
+class SimConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    #: Rule 8: fixed timestep. Anything slower is scheduled by tick index.
+    dt_s: float = Field(default=0.1, gt=0)
+    #: Hard stop so a malformed plan cannot hang the batch harness.
+    max_duration_s: float = Field(default=3600.0, gt=0)
+
+    def ticks(self, duration_s: float) -> int:
+        return int(round(duration_s / self.dt_s))
 
 
 class ValidatorConfig(BaseModel):
@@ -135,6 +201,9 @@ class WorldConfig(BaseModel):
 
     world_map: WorldMap
     fleet: FleetSpec
+    sim: SimConfig = SimConfig()
+    link: LinkConfig = LinkConfig()
+    wind: WindConfig = WindConfig()
     validator: ValidatorConfig = ValidatorConfig()
 
     @model_validator(mode="after")

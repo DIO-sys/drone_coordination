@@ -40,3 +40,14 @@ fleet:
 validator:
   time_estimate_slack: 1.0
   require_link_fallback: true
+sim:
+  dt_s: 0.1
+  max_duration_s: 3600.0
+link:
+  range_m: 6000.0
+  p_drop_per_s: 0.02
+  p_recover_per_s: 0.4
+wind:
+  speed_mps: 6.0
+  direction_deg: 225.0
+  speed_sigma_mps: 2.0
