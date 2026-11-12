@@ -129,6 +129,14 @@ class TaskRun:
     #: the tick rate by tick index, and this is the same principle.
     on_station_ticks: int = 0
     dwell_ticks: int = 0
+    #: Whether the aircraft has reached the task's first waypoint. Dwell may
+    #: not start before it has. Until Phase 3 the dwell counter ran from the
+    #: moment the task was assigned, so a 545 s station-keep 145 s of flying
+    #: away was satisfied by loitering near base: the mission "finished"
+    #: before the aircraft ever arrived. It corrupted mission duration, made
+    #: every station_keep look cheaper than it is in the Phase 3 labels, and
+    #: made "watch this point for ten minutes" mean nothing in the DSL.
+    reached: bool = False
     done: bool = False
 
     @property
@@ -150,6 +158,8 @@ class TaskRun:
         if self.cyclic:
             if self.dwell_ticks <= 0:
                 return 1.0
+            # zero until the aircraft is actually on station, which is the
+            # honest answer: nothing has been watched yet
             return min(1.0, self.on_station_ticks / self.dwell_ticks)
         if not self.waypoints_m:
             return 1.0
@@ -185,14 +195,21 @@ def advance(run: TaskRun, arrived: bool, dt_s: float) -> TaskRun:
     del dt_s
     if run.done:
         return run
+    reached = run.reached or arrived
     on_station = run.on_station_ticks
-    if run.cyclic:
+    if run.cyclic and reached:
         on_station += 1
         if on_station >= run.dwell_ticks:
-            return replace(run, on_station_ticks=on_station, done=True)
+            return replace(run, reached=reached, on_station_ticks=on_station, done=True)
     if not arrived:
-        return replace(run, on_station_ticks=on_station)
+        return replace(run, reached=reached, on_station_ticks=on_station)
     index = run.wp_index + 1
     if not run.cyclic and index >= len(run.waypoints_m):
-        return replace(run, wp_index=len(run.waypoints_m), on_station_ticks=on_station, done=True)
-    return replace(run, wp_index=index, on_station_ticks=on_station)
+        return replace(
+            run,
+            wp_index=len(run.waypoints_m),
+            reached=reached,
+            on_station_ticks=on_station,
+            done=True,
+        )
+    return replace(run, wp_index=index, reached=reached, on_station_ticks=on_station)

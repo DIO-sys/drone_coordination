@@ -29,6 +29,19 @@ def dist_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
 
+def point_segment_dist_m(
+    p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
+) -> float:
+    """Distance from ``p`` to the segment ``ab`` (not the infinite line)."""
+    abx, aby = b[0] - a[0], b[1] - a[1]
+    denom = abx * abx + aby * aby
+    if denom == 0.0:
+        return dist_m(p, a)
+    t = ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / denom
+    t = min(1.0, max(0.0, t))
+    return dist_m(p, (a[0] + t * abx, a[1] + t * aby))
+
+
 class MapFeature(BaseModel):
     """A named piece of terrain the operator can refer to by name."""
 
@@ -71,6 +84,43 @@ class MapFeature(BaseModel):
             x2, y2 = pts[(i + 1) % len(pts)]
             total += x1 * y2 - x2 * y1
         return abs(total) / 2.0
+
+    def contains(self, p: tuple[float, float]) -> bool:
+        """Ray-casting point-in-polygon; False for non-area features."""
+        if self.kind != "area":
+            return False
+        pts = self.coords_m
+        inside = False
+        for i in range(len(pts)):
+            x1, y1 = pts[i]
+            x2, y2 = pts[(i + 1) % len(pts)]
+            if (y1 > p[1]) != (y2 > p[1]):
+                x_at = x1 + (p[1] - y1) * (x2 - x1) / (y2 - y1)
+                if p[0] < x_at:
+                    inside = not inside
+        return inside
+
+    def nearest_dist_m(self, origin: tuple[float, float]) -> float:
+        """Distance from ``origin`` to the closest point of this feature.
+
+        Used by the validator in place of distance-to-centroid. The centroid
+        is not a sound lower bound on travel: an aircraft tasked with a
+        corridor enters at whichever end is nearer and starts sensing there,
+        and one sweeping an area begins at its edge. Charging travel to the
+        centroid made ``makespan_lower_bound_s`` exceed what the simulator
+        actually achieved -- a lower bound that gets beaten, which surfaced as
+        10% of *successful* Phase 3 runs finishing "impossibly" early.
+        """
+        if self.kind == "point":
+            return dist_m(origin, self.coords_m[0])
+        pts = self.coords_m
+        if self.kind == "area":
+            if self.contains(origin):
+                return 0.0
+            edges = [(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+        else:  # corridor: an open polyline, so no closing edge
+            edges = [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+        return min(point_segment_dist_m(origin, a, b) for a, b in edges)
 
     @property
     def length_m(self) -> float:

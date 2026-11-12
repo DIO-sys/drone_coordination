@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from planguard.config import REQUIRED_FEATURE_KIND, WorldConfig, dist_m
+from planguard.config import REQUIRED_FEATURE_KIND, MapFeature, WorldConfig, dist_m
 from planguard.dsl.errors import BLOCKING_CODES, ValidationError, ValidationReport
 from planguard.dsl.schema import MissionPlan, TaskSpec
 
@@ -73,12 +73,33 @@ def per_aircraft_work_s(task: TaskSpec, cfg: WorldConfig) -> float:
     return work
 
 
+def travel_lower_bound_s(feature: MapFeature, cfg: WorldConfig) -> float:
+    """Shortest time to reach ``feature`` from base in nominal conditions.
+
+    Distance to the **nearest point** of the feature, not its centroid: a
+    corridor is entered at the nearer end and an area at its edge. Charging
+    travel to the centroid was not a lower bound at all, and it showed up as
+    10% of *successful* Phase 3 runs finishing earlier than the validator said
+    was possible.
+
+    "Nominal" is load-bearing, and the limit of what this function claims --
+    see ``makespan_lower_bound_s``.
+    """
+    return feature.nearest_dist_m(cfg.base_m) / cfg.fleet.speed_mps
+
+
 def duration_s(task: TaskSpec, cfg: WorldConfig) -> float:
-    """Travel from base plus one aircraft's share of the sensor work."""
+    """Travel from base plus one aircraft's share of the sensor work.
+
+    Travel is to the **nearest point** of the target, not its centroid, so the
+    result stays a lower bound: an aircraft patrolling a corridor enters at the
+    nearer end, and one sweeping an area starts at its edge. See
+    ``MapFeature.nearest_dist_m`` for what the centroid version broke.
+    """
     feature = cfg.world_map.get(task.target)
     if feature is None:
         return 0.0
-    travel_s = dist_m(cfg.base_m, feature.centroid_m) / cfg.fleet.speed_mps
+    travel_s = travel_lower_bound_s(feature, cfg)
     return travel_s + per_aircraft_work_s(task, cfg)
 
 
@@ -335,6 +356,17 @@ def makespan_lower_bound_s(plan: MissionPlan, cfg: WorldConfig) -> tuple[float, 
 
     The larger of the two is still a lower bound, so the check stays one-sided:
     exceeding it proves infeasibility, fitting inside it proves nothing.
+
+    **It bounds the nominal mission, not an individual simulated run.** Three
+    things let a particular run beat it: a tailwind (wind speed is drawn from a
+    normal, so it is unbounded and *no* finite bound could survive it), start
+    positions jittered up to ``scenario.start_jitter_m`` towards the target,
+    and a finite arrival tolerance that lets each waypoint be clipped by up to
+    one capture radius. Padding the bound with those terms was tried and
+    abandoned: it buys nothing against unbounded wind, and it weakens the one
+    check the repair loop depends on in order to track simulator noise. The
+    arithmetic is what this bounds, and that is what the time check needs.
+    ``tests/test_risk_harness.py`` pins the nominal property instead.
     """
     schedule = estimate_schedule(plan, cfg)
     critical_s = max((s.end_s for s in schedule), default=0.0)

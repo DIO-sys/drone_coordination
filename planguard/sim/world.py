@@ -97,10 +97,29 @@ class World:
                 return task_id
         return None
 
-    def _ready_task_ids(self) -> list[str]:
+    def _ready_task_ids(self, tick_index: int) -> list[str]:
+        """Tasks whose dependencies are met and whose earliest start has passed.
+
+        ``start_after_s`` is compared by tick index, not by accumulating
+        seconds, per rule 8 -- ten additions of 0.1 do not make 1.0.
+
+        This gate was missing until Phase 3. The simulator honoured
+        ``depends_on`` and silently ignored ``start_after_s``, so a task the
+        operator had deferred began immediately. It surfaced as 10% of
+        *successful* runs finishing faster than ``makespan_lower_bound_s``
+        claimed was possible: the validator costed the delay into the critical
+        path and the executive did not serve it. Left in, it would have been
+        much worse than a loose bound -- a DSL field with no effect, which the
+        Phase 6 model would have been scored on emitting correctly and the
+        validator would have rejected plans over.
+        """
         out = []
         for task in self.plan.tasks:
             if self.status[task.id] != "pending":
+                continue
+            if task.start_after_s is not None and tick_index < self.cfg.sim.ticks(
+                task.start_after_s
+            ):
                 continue
             if all(self.status.get(d) == "done" for d in task.depends_on):
                 out.append(task.id)
@@ -146,7 +165,7 @@ class World:
                 self._no_link_s += dt_s
 
         # 2 & 3. allocate ready tasks to idle aircraft
-        ready = self._ready_task_ids()
+        ready = self._ready_task_ids(tick_index)
         if ready:
             busy = [d for d, r in self.runs.items() if not r.done]
             fresh = allocate(self.plan, ready, self.drones, busy, self.cfg)

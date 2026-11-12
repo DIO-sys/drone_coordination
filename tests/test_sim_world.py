@@ -156,17 +156,40 @@ def test_non_cyclic_run_completes_after_its_last_waypoint(cfg: WorldConfig) -> N
     assert run.progress == 1.0
 
 
-def test_station_keep_completes_on_dwell_not_on_waypoints(cfg: WorldConfig) -> None:
+def test_station_keep_dwell_does_not_run_before_arrival(cfg: WorldConfig) -> None:
+    """Phase 3 bug: the dwell counter ran from assignment, not from arrival,
+    so a long watch over a distant point was satisfied by loitering near base.
+    """
     bridge = cfg.world_map.get("bridge")
     assert bridge is not None
     task = TaskSpec(id="t", kind="station_keep", target="bridge", dwell_s=1.0)
     run = start_run(task, bridge, cfg.fleet.sensor_swath_m, cfg.fleet.turn_radius_m, 0, 1, 0.1)
     assert run.cyclic
-    for _ in range(9):
+
+    for _ in range(50):  # five seconds of flying, far longer than the dwell
         run = advance(run, arrived=False, dt_s=0.1)
         assert not run.done
+        assert run.on_station_ticks == 0
+        assert run.progress == 0.0
+
+
+def test_station_keep_completes_on_dwell_not_on_waypoints(cfg: WorldConfig) -> None:
+    bridge = cfg.world_map.get("bridge")
+    assert bridge is not None
+    task = TaskSpec(id="t", kind="station_keep", target="bridge", dwell_s=1.0)
+    run = start_run(task, bridge, cfg.fleet.sensor_swath_m, cfg.fleet.turn_radius_m, 0, 1, 0.1)
+
+    run = advance(run, arrived=True, dt_s=0.1)  # on station; the clock starts
+    assert run.reached
+    assert not run.done
+    for _ in range(8):
+        run = advance(run, arrived=False, dt_s=0.1)
+        assert not run.done
+    # it completes on its dwell having elapsed, not on running out of orbit
+    # waypoints -- an orbit has no end
     run = advance(run, arrived=False, dt_s=0.1)
     assert run.done
+    assert run.on_station_ticks == 10
 
 
 def test_progress_is_monotonic(cfg: WorldConfig) -> None:
@@ -458,10 +481,17 @@ def test_tight_budgets_make_outcome_sensitive_to_execution_risk(cfg: WorldConfig
     With a budget near the feasibility boundary, wind and link outages decide
     the outcome. Phase 3's plan sampler therefore has to sample budgets near
     that boundary, or the risk model will only ever learn "enough aircraft?".
+
+    790 s is measured, not guessed. The demo plan's makespan lower bound is
+    772 s, and the cliff is between 780 s (11/22 of full-fleet runs succeed)
+    and 810 s (22/22) -- a window about 4% wide. Phase 3's sampler band is
+    calibrated from this; see ARCHITECTURE section 10. The window moved here
+    once ``station_keep`` stopped counting its dwell before the aircraft
+    arrived, which had been making the demo plan's 600 s watch nearly free.
     """
-    tight = dict(DEMO, time_budget_s=650, name="tight")
+    tight = dict(DEMO, time_budget_s=790, name="tight")
     plan = MissionPlan.model_validate(tight)
-    results = [simulate(plan, cfg, seed) for seed in range(12)]
+    results = [simulate(plan, cfg, seed) for seed in range(24)]
     full_fleet = [r for r in results if r.aircraft_launched >= 3]
     assert full_fleet, "no seed launched enough aircraft to test the time margin"
     assert len({r.success for r in full_fleet}) == 2, [
