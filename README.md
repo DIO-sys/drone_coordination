@@ -29,15 +29,16 @@ fine-tune lose, and a negative result gets published as one.
 | 0 | Mission DSL + 9-check static validator + golden corpus | **done** |
 | 1 | Simulator, behaviour trees, scenario randomisation, replay | **done** |
 | 2 | CBBA task allocation + mission metrics from logs | **done** |
-| 3 | Plan sampler + batch harness -> risk dataset | in progress |
-| 4 | XGBoost risk surrogate + SHAP + calibration | |
-| 5 | Natural-language dataset (plan-first, verifier-filtered) | |
-| 6 | QLoRA fine-tune + constrained decoding + five-arm evaluation | |
+| 3 | Plan sampler + batch harness -> risk dataset | **done** |
+| 4 | XGBoost risk surrogate + SHAP + calibration | **done** |
+| 5 | Natural-language dataset (plan-first, verifier-filtered) + 150 hand-written held-out items | **done** |
+| 6 | QLoRA fine-tune + constrained decoding + five-arm evaluation | next (needs a GPU) |
 | 7 | LangChain tools + LangGraph approval graph + repair loop | |
 | 8 | FastAPI + dashboard | |
 | 9 | `RESULTS.md` + demo GIF | |
 
-Current: **200 tests**, 50 golden validator cases (15 valid, 35 rejected), ruff and mypy --strict clean.
+Current: **289 tests**, 50 golden validator cases (15 valid, 35 rejected), 150 hand-written
+held-out NL items, ruff and mypy --strict clean.
 
 ## Quickstart
 
@@ -57,7 +58,37 @@ uv run python -m planguard.sim.replay runs/demo
 
 # does CBBA actually beat the greedy placeholder? paired, same seeds
 uv run python -m experiments.compare_allocators --plan examples/contested.json --seeds 150
+
+# phase 3: is the sampler's budget band near the feasibility boundary?
+# run this before the full build -- it is the check that decides whether the
+# risk dataset has any signal in it at all
+uv run python -m planguard.risk.build --pilot
+
+# the full risk dataset: 2,000 plans x 20 seeds = 40,000 missions (~50 min on 16 cores)
+uv run python -m planguard.risk.build --plans 2000 --seeds 20 --out data/risk
+
+# phase 4: train the surrogate and print E2 -- the heuristic comparison, the
+# calibration table and the measured screening speedup
+uv run python -m planguard.risk.train --data data/risk
+
+# phase 5: the NL dataset, with both verifier-filter yields and the drift
+# report against the hand-written held-out set
+uv run python -m planguard.copilot.build_dataset --pairs 4000 --out data/nl
 ```
+
+## Headline numbers so far
+
+The risk surrogate beats "path length over budget" on held-out plans in unseen weather,
+where the baseline is the same model fitted on that one feature rather than a strawman:
+
+| model | MAE | AUC | ECE |
+|---|---|---|---|
+| baseline (`budget_ratio` alone) | 0.2613 | 0.7471 | 0.0636 |
+| **full feature set** | **0.1372** | **0.9274** | 0.0378 |
+
+Screening costs 157 us per plan against 23.5 CPU-seconds to simulate it — a **149,767x**
+speedup. Full numbers, including what each one replaced and why, are in `ARCHITECTURE.md`
+section 10.
 
 A plan is always validated before it is simulated. Simulating an invalid plan would
 produce a risk label for something that could never be flown.

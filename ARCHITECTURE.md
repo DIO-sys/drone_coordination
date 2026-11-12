@@ -365,9 +365,118 @@ and reintroduce the false positives.
 Net effect: 9 checks still, 14 error codes instead of 15, and the validator no longer
 rejects feasible plans.
 
-## 5. Risk surrogate (`planguard/risk/`) — phase 4
+## 4b. Plan sampler and batch harness — phase 3, done
 
-Simulating every candidate plan is expensive. The surrogate featurises a plan (~20 tabular
+`planguard/dsl/sample.py` draws plans; `planguard/risk/harness.py` flies them across seeds
+and labels them.
+
+Plans are drawn to be valid **by construction** — feature kinds matched to task kinds, only
+backwards dependency edges so the graph is acyclic, a `link_lost` fallback whenever any task
+needs a link — and then submitted to `validate` anyway. The validator is the arbiter, not
+the sampler, and the surviving fraction is reported rather than assumed.
+
+**Budgets are drawn as a multiple of `makespan_lower_bound_s`, not in absolute seconds.**
+This normalises for plan size: a ratio of 1.3 means "30% above the arithmetic minimum"
+whether the plan is one rally or four sweeps.
+
+`plan_id` is a SHA-256 of the plan's content with name and rationale stripped, so two plans
+differing only by name are the same plan. The train/test split is a salted hash of that id,
+so it survives a re-tuned sampler and a regenerated corpus.
+
+### Why the budget band is calibrated and not chosen
+
+The one setting that can quietly ruin the dataset. With a loose budget every run succeeds
+unless the fleet fails to launch, so the only feature with signal is aircraft count and the
+"risk model" is a fleet-size lookup table. `--pilot` exists to check it before committing to
+the long build. The measured comparison is in section 10; the first band looked entirely
+reasonable and produced a corpus with no gradient in it.
+
+### What the pilot found, which was not the budget
+
+Conditioning on runs where enough aircraft launched, budget ratio moved failure rate from
+0.136 to 0.075 — real but weak. The strong effect was fleet demand: plans whose largest task
+wants 1 / 2 / 3 aircraft fail at 0.036 / 0.119 / 0.508. A quarter of all failed runs are
+runs where **fewer aircraft launched than the plan's largest task demands**, and neither
+allocator will part-staff.
+
+This is not a degenerate shortcut to remove. `aircraft_count` is plan-time observable, fleet
+availability is not, and "asking for three of four aircraft is risky" is exactly what a
+plan-risk model should tell an operator. It is recorded because it dominates, and Phase 4
+must not be allowed to claim credit for discovering it.
+
+### The harness
+
+Multiprocessing is not an optimisation: 40,000 missions at ~1.2 s is 13 hours on one core.
+The work is embarrassingly parallel because determinism comes from the seed and nothing is
+shared.
+
+`imap_unordered` keeps cores busy under uneven run lengths, and rows are then **sorted by
+(plan id, seed)**. Returning them in completion order would make the dataset depend on
+machine load — the same command writing two different files, rule 5 broken where it is
+hardest to notice. A test asserts 1 worker and 4 workers produce identical output.
+
+`spawn` rather than `fork`: forking a process that has touched numpy's RNG invites
+correlated streams. The cost is parsing the world config once per worker. Any script calling
+the harness needs an `if __name__ == "__main__":` guard, because `spawn` re-imports the main
+module.
+
+### Rule 6, concretely
+
+The split is decided first, from the plan hash; each side then draws from its **own disjoint
+block of scenario seeds** (test seeds start at 1,000,000). A test row is an unseen plan in
+unseen weather. The cost is that difficulty differences between seed blocks appear as
+train/test skew; over 20 seeds x thousands of plans that averages out.
+
+### What is stored, and why the plan is stored with it
+
+`plans.parquet` holds one row per plan — label, plan-time context, and the **plan JSON
+itself**. `runs.parquet` holds one row per (plan, seed). Phase 4 derives features from the
+stored plan, so feature engineering can be redone without re-running a single mission. The
+expensive half of this dataset is the 40,000 missions and they should not be paid for twice.
+
+The outcome aggregates in `plans.parquet` are diagnostics and **never features** — they are
+realised outcomes, which rule 2 forbids. They are there because they make a surprising label
+explicable.
+
+## 4c. Three defects the harness found in the simulator
+
+The check that found them: every *successful* run must take at least as long as
+`makespan_lower_bound_s` says is possible. 10% of runs beat it.
+
+**`station_keep` counted its dwell from assignment, not from arrival.** A 545 s watch over a
+point 145 s of flying away was satisfied by loitering near base, and the mission "finished"
+before the aircraft ever got there. The worst of the three: it made `dwell_s` nearly
+meaningless in the DSL, understated every `station_keep` in the labels, and would have had
+the Phase 6 model scored on emitting a field the executive ignored.
+
+**The executive ignored `start_after_s` entirely.** It honoured `depends_on` and nothing
+else, so a deferred task began immediately — another DSL field with no effect, and one the
+validator rejects plans over (`START_AFTER_BEYOND_BUDGET`).
+
+**`duration_s` charged travel to a feature's centroid.** An aircraft enters a corridor at the
+nearer end and an area at its edge, so the centroid bounds nothing. Replaced with
+`MapFeature.nearest_dist_m` (point-to-segment, with point-in-polygon for areas).
+
+### And one thing that was not a defect
+
+After those fixes the simulator still occasionally beat the bound, and the obvious next move
+was to pad the bound with start jitter and arrival tolerance. That was tried and reverted.
+Wind speed is drawn from a normal, so it is unbounded, and **no finite bound survives a
+tailwind** — the padding bought nothing while weakening the one check the Phase 7 repair
+loop depends on, in order to track simulator noise.
+
+`makespan_lower_bound_s` bounds the *nominal* mission: no wind, aircraft at base, tight
+arrival tolerance. That is what the time check needs and all it ever claimed. The regression
+test pins the nominal property in a clean-room config.
+
+These fixes moved the demo plan's feasibility cliff from ~650 s to 780–810 s, because its
+600 s bridge watch is no longer nearly free. Every budget-dependent number from Phases 1 and
+2 was re-measured rather than adjusted; see section 10.
+
+## 5. Risk surrogate (`planguard/risk/`) — phase 4, done
+
+Phase 3 built the dataset; Phase 4 builds the model. Simulating every candidate plan is
+expensive. The surrogate featurises a plan (~20 tabular
 features: aircraft count, node count, total commanded path length, max range from base,
 link-dependent task count, time budget versus estimated duration, fallback coverage, …)
 plus scenario parameters, and predicts failure probability in microseconds. That lets the
@@ -428,8 +537,12 @@ debrief cannot reconstruct does not exist as far as the risk model is concerned.
 
 ## 8. Performance
 
-555 ms per 1200 s mission with 4 aircraft (~39k aircraft-ticks/s). Phase 3's 40,000 runs is
-**6.2 hours single-core**, so the batch harness needs multiprocessing from the start.
+~1.2 CPU-seconds per mission, measured over the Phase 3 build: 40,000 missions in 2,945 s
+wall on 16 workers, 13.6 runs/s. Single-core that is **13 hours**, so the batch harness
+needs multiprocessing — it is not an optimisation.
+
+The earlier figure here was 555 ms, measured before `station_keep` stopped counting its
+dwell before arrival. Missions genuinely got longer when that was fixed.
 
 ## 9. Known limitations
 
@@ -450,45 +563,197 @@ Stated here and repeated in `RESULTS.md`; never hidden.
   distribution is not.
 - **Only the first task of each CBBA bundle is committed**, so the deeper sequencing value
   CBBA can express is reflected only through its effect on bids.
+- **`makespan_lower_bound_s` bounds the nominal mission, not a simulated run.** Wind is
+  drawn from an unbounded normal, so a tailwind can beat any finite estimate.
+- **A quarter of all failures in the risk corpus are understaffing**, not timing. Legitimate
+  signal, but it dominates, and Phase 4 reports performance with it visible rather than
+  letting it carry the model.
+- **The risk corpus uses one fixed map.** Scenario randomisation deliberately does not move
+  map features, so nothing shows the surrogate generalising to unseen terrain.
+- **Train and test draw from different scenario-seed blocks**, so any difficulty difference
+  between blocks appears as train/test skew. Small over 20 seeds x 2,000 plans, not zero.
+- **Sampled plans are template-shaped**, drawn from one generator, so the risk model's
+  held-out set is in-distribution in a way the Phase 5 hand-written set is not.
+- **Phase 5 instructions always state the budget**, which real tasking often omits. Required
+  for scoreability: an instruction that omits it leaves `time_budget_s` unrecoverable from
+  the model's only input.
+- **Phase 5 plans are snapped to a 30 s grid** so durations are sayable and invertible. The
+  risk corpus is not snapped, so the two datasets are not drawn from identical distributions.
+- **The held-out set is shorter than the generated data** (19.6 vs 43.7 mean words). A Phase
+  6 score drop on it will be partly density, not only unfamiliar phrasing, and must not be
+  read as pure generalisation failure.
+- **The same author wrote the back-translation phrase banks and the held-out set.** The
+  drift report turns "independent of the templates" into measurable numbers, but an outside
+  author would be better.
 
 ## 10. Measured results so far
 
-Re-measure before editing these; do not retype from memory.
+Re-measure before editing these; do not retype from memory. Every number below was
+re-measured after the Phase 3 simulator fixes, which moved most of them.
 
-**Tests:** 200 passing. 50 golden validator cases: 15 valid, 28 rejected by the validator,
+**Tests:** 289 passing. 50 golden validator cases: 15 valid, 28 rejected by the validator,
 7 rejected by the schema before the validator runs. 9 validator checks, 14 error codes.
+150 hand-written held-out NL items.
 
-**Simulator:** 555 ms per 1200 s / 4-aircraft mission. Steady-state link availability
-0.96196 at the default hazard rates, matched by the simulator to three decimals.
+**Simulator:** ~1.2 CPU-seconds per mission (40,000 missions in 2,945 s wall on 16 workers,
+13.6 runs/s). Steady-state link availability 0.96196 at the default hazard rates, matched by
+the simulator to three decimals.
 
-**Feasibility boundary** (`examples/contested.json`, 5 tasks, fleet of 4, n=80 seeds,
-restricted to runs where at least 3 aircraft launched):
+### Feasibility boundaries
 
-| budget | success | mean completed |
-|---|---|---|
-| 650 s | 0.84 | 0.919 |
-| 700 s | 0.97 | 0.986 |
-| 750 s | 1.00 | 1.000 |
-| 800 s and above | 1.00 | 1.000 |
+`examples/ridge.json`, n=24 seeds, makespan lower bound 772 s:
 
-The cliff is between 650 s and 750 s. Phase 3 must sample budgets in that band: above it
-every run succeeds and the risk model has no signal to learn.
-
-**CBBA vs greedy** (`experiments/compare_allocators.py`, same plan, budget 1500 s, n=150
-paired seeds, 95% bootstrap CI on the per-seed difference):
-
-| metric | greedy | cbba | paired difference (cbba − greedy) | verdict |
+| budget | 780 s | 790 s | 800 s | 810 s and above |
 |---|---|---|---|---|
-| success rate | 0.98 | 0.99 | +0.007 [+0.000, +0.020] | no detectable difference |
-| completed fraction | 0.996 | 0.997 | +0.001 [+0.000, +0.004] | no detectable difference |
-| makespan | 599 s | 579 s | −20.0 s [−29.1, −11.0] | **difference detected** |
+| success (full-fleet runs) | 11/22 | 16/22 | 20/22 | 22/22 |
 
-On `examples/ridge.json` the two allocators are **byte-identical**: two tasks and
-distance-dominated bids, so CBBA converges on the same nearest-aircraft answer.
+`examples/contested.json`, n=60 seeds, lower bound 417 s:
 
-Honest reading: **CBBA buys no measurable success-rate improvement on these plans.** With a
-budget this loose, success is decided by how many aircraft launched, not by who flies what.
-The real and repeatable effect is a **~3% shorter makespan** — CBBA sequences each
-aircraft's tasks instead of committing greedily task-by-task. That margin should matter more
-at tight budgets, where it converts into success; demonstrating that is Phase 3 work, since
-it needs the feasibility-boundary sweep above run against both allocators.
+| budget | 700 s | 750 s | 800 s | 850 s | 1000 s and above |
+|---|---|---|---|---|---|
+| success (all seeds) | 0.67 | 0.70 | 0.80 | 0.92 | 0.98 |
+
+Both cliffs are narrow — the ridge plan's is about 4% wide. Phase 3 samples in that band:
+above it every run succeeds and the risk model has nothing to learn.
+
+### CBBA vs greedy
+
+`experiments/compare_allocators.py`, `examples/contested.json`, n=150 paired seeds, 95%
+bootstrap CI on the per-seed difference:
+
+| budget | metric | greedy | cbba | paired difference | verdict |
+|---|---|---|---|---|---|
+| 1500 s | success rate | 0.98 | 0.98 | +0.000 [0, 0] | none |
+| 1500 s | makespan | 611 s | 581 s | **−30.0 s [−39.1, −21.3]** | detected |
+| 850 s | success rate | 0.89 | 0.89 | +0.000 [0, 0] | none |
+| 850 s | makespan | 594 s | 562 s | **−31.7 s [−40.5, −23.2]** | detected |
+
+On `examples/ridge.json` at n=150 the two allocators are **byte-identical** (makespan
+difference −0.001 s [−0.028, +0.034]): two tasks and distance-dominated bids, so CBBA
+converges on the same nearest-aircraft answer. CBBA's sequencing only buys anything when
+there is sequencing to do.
+
+Honest reading: **CBBA buys no measurable success-rate improvement on these plans**, at
+either budget. The real and repeatable effect is a **~5% shorter makespan**.
+
+#### The version of this table that was wrong, and why it is recorded
+
+The first run reported CBBA **−20 s** on makespan. After the Phase 3 dwell fix it reported
+**+13 s**, and at the tight budget **−0.027 success rate with the CI excluding zero** —
+CBBA measurably *worse* than the placeholder it replaced.
+
+That was a real defect, and the dwell fix only exposed it. `score_path` charged travel to
+each feature's **centroid** and then placed the aircraft *at* the centroid for the next task
+in the bundle. A corridor patrol enters at the near end and finishes at the far one, up to
+1.5 km away, so every task later in a bundle was scored from the wrong position — the same
+bug class just found in the validator, sitting in the allocator. It was invisible while
+dwell was nearly free, because chained positions barely mattered. Fixed with
+`MapFeature.entry_m` / `exit_m`.
+
+A second hypothesis was tested and **refuted**: that the `0.999^arrival_s` discount inverts
+priority, since a priority-1 task at t=1200 s scores 0.90 against a priority-3 task at t=0
+scoring 1.00. The arithmetic is right, the conclusion was wrong. Sweeping the discount
+showed *weakening* it makes CBBA worse — 0.9995 through 0.9999 each cost 0.030 of success
+rate at the tight budget, and removing it entirely cost 18–31 s of makespan. The time
+preference is load-bearing, not a formality for the convergence proof. Left at 0.999.
+
+### Phase 3: the risk dataset
+
+2,000 plans x 20 seeds = 40,000 missions, 2,945 s on 16 workers. Sampler yield 88.7%
+(all rejections `LINK_RANGE_UNREACHABLE`). 1,614 train / 386 test plans. Mean failure rate
+0.277; **1,034 of 2,000 plans have a label strictly between 0 and 1**.
+
+| budget ratio band | plans | mean failure rate | all-fail | all-succeed |
+|---|---|---|---|---|
+| 1.01 – 1.14 | 326 | 0.556 | 104 | 27 |
+| 1.14 – 1.27 | 328 | 0.370 | 58 | 67 |
+| 1.27 – 1.41 | 347 | 0.265 | 39 | 143 |
+| 1.41 – 1.54 | 346 | 0.182 | 20 | 146 |
+| 1.54 – 1.67 | 325 | 0.144 | 9 | 163 |
+| 1.67 – 1.80 | 328 | 0.149 | 13 | 177 |
+
+The band calibration worked: a clean monotone gradient. The rejected band (1.05–2.2) was
+flat at ~0.10–0.16 with only 38% of plans carrying an informative label.
+
+### Phase 4: the risk surrogate (E2)
+
+Held-out plans, unseen scenario seeds. The baseline is **the same model family with the same
+hyperparameters fitted on `budget_ratio` alone** — the strongest fair version of "path length
+over budget", not a raw unscaled ratio:
+
+| model | MAE | RMSE | Brier | AUC | ECE | Spearman |
+|---|---|---|---|---|---|---|
+| baseline (`budget_ratio`) | 0.2613 | 0.3210 | 0.1455 | 0.7471 | 0.0636 | 0.3700 |
+| **full feature set** | **0.1372** | 0.2079 | 0.0904 | **0.9274** | 0.0378 | 0.7716 |
+| full + isotonic | 0.1290 | 0.2111 | 0.0908 | 0.9273 | **0.0356** | 0.7710 |
+
+**MAE 47.5% below the heuristic.** Phase 4's acceptance check is met.
+
+Calibration, reported because the acceptance check demands it and because a model can rank
+well and still be unusable for thresholding (which is what the Phase 7 graph needs):
+
+| predicted bin | n | mean predicted | observed | gap |
+|---|---|---|---|---|
+| [0.00, 0.10) | 179 | 0.026 | 0.010 | +0.016 |
+| [0.10, 0.20) | 43 | 0.150 | 0.110 | +0.039 |
+| [0.20, 0.30) | 27 | 0.242 | 0.178 | +0.065 |
+| [0.30, 0.40) | 23 | 0.350 | 0.326 | +0.024 |
+| [0.40, 0.50) | 40 | 0.449 | 0.424 | +0.025 |
+| [0.50, 0.60) | 21 | 0.548 | 0.436 | +0.112 |
+| [0.60, 0.70) | 14 | 0.658 | 0.732 | −0.074 |
+| [0.70, 0.80) | 9 | 0.746 | 0.828 | −0.082 |
+| [0.80, 0.90) | 13 | 0.852 | 0.773 | +0.079 |
+| [0.90, 1.00) | 17 | 0.979 | 0.885 | +0.094 |
+
+ECE 0.0378, falling to 0.0356 after isotonic recalibration fitted on the training split.
+AUC is unchanged by recalibration (0.9274 → 0.9273), which is the point: a monotone map
+cannot change ranking, so calibration and discrimination are separate properties.
+
+**Screening speedup: 149,767x.** Featurise one plan 65.2 us, predict on it 91.9 us, so
+157.1 us end to end, against 23.53 CPU-seconds to simulate the same plan over 20 seeds.
+Quoting batched prediction alone would read **24,939,668x** — a real number that no caller
+experiences, since the Phase 7 graph screens one plan at a time and must featurise it first.
+The honest figure is the per-plan one.
+
+SHAP, mean |contribution| over held-out plans — note what is on top:
+
+| feature | mean abs SHAP |
+|---|---|
+| `aircraft_demand_ratio` | 0.1418 |
+| `budget_ratio` | 0.0873 |
+| `budget_slack_s` | 0.0359 |
+| `n_sweep` | 0.0338 |
+| `total_aircraft_demand` | 0.0315 |
+
+Fleet demand outweighs the time margin by 1.6x, exactly as the Phase 3 pilot predicted. The
+heuristic feature accounts for under 50% of total attribution, which is the test that stops
+the surrogate being a time margin in a trenchcoat.
+
+### Phase 5: the NL dataset
+
+Verifier filter, both stages reported: **validator yield 84–89%**, **simulation yield 92%**
+(share of valid plans that also flew above threshold). All rejections are
+`LINK_RANGE_UNREACHABLE` — `north_ridge` reaches 8,051 m against a 7,500 m link range, so it
+can never carry `requires_link`.
+
+Held-out set: **150 hand-written items**, all 150 reference plans validating. Registers:
+radio 36, chatty 34, formal 28, terse 28, bulleted 24. 46% multi-task, up to 5 tasks, 15%
+with dependencies, 17% requiring a link, 31% multi-aircraft.
+
+Drift from the generator, which is what makes rule 4's separate reporting mean anything
+rather than being an assertion:
+
+| measure | value |
+|---|---|
+| held-out 4-grams also present in 600 generated instructions | **2.7–5.2%** |
+| held-out vocabulary the generator never produces | **68.6%** |
+| mean length, held-out vs generated | 19.6 vs 43.7 words |
+| type-token ratio, size-matched | 0.131 vs 0.054 |
+
+The n-gram echo is the number that matters: the hand-written set is not reproducing the
+phrase banks. A test fails if it exceeds 15%.
+
+One correction worth recording: the type-token ratios were first computed over 150
+hand-written and 600 generated instructions, which inflated the gap to 4x. TTR falls as a
+corpus grows, so it is now measured on a size-matched sample and the real gap is 2.4x. The
+finding survived; the first number was an artefact of the sample sizes.

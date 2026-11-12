@@ -100,6 +100,50 @@ class MapFeature(BaseModel):
                     inside = not inside
         return inside
 
+    def entry_m(self, origin: tuple[float, float]) -> tuple[float, float]:
+        """Where an aircraft coming from ``origin`` starts working.
+
+        A corridor is entered at the nearer **endpoint**, because a patrol has
+        to traverse the whole polyline and starting in the middle means flying
+        part of it twice. An area is entered at its nearest point, a point
+        feature at itself.
+
+        Distinct from ``nearest_dist_m``, which the validator uses: a bound
+        wants the smallest possible value, an estimate wants the likely one.
+        """
+        if self.kind == "point":
+            return self.coords_m[0]
+        if self.kind == "corridor":
+            ends = (self.coords_m[0], self.coords_m[-1])
+            return min(ends, key=lambda e: dist_m(origin, e))
+        if self.contains(origin):
+            return origin
+        pts = self.coords_m
+        edges = [(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+        best = min(edges, key=lambda ab: point_segment_dist_m(origin, *ab))
+        a, b = best
+        abx, aby = b[0] - a[0], b[1] - a[1]
+        denom = abx * abx + aby * aby
+        if denom == 0.0:
+            return a
+        t = min(1.0, max(0.0, ((origin[0] - a[0]) * abx + (origin[1] - a[1]) * aby) / denom))
+        return (a[0] + t * abx, a[1] + t * aby)
+
+    def exit_m(self, origin: tuple[float, float]) -> tuple[float, float]:
+        """Where an aircraft ends up after working this feature.
+
+        A corridor patrol finishes at the **far** end, which for this map is
+        up to 1.5 km from the centroid. CBBA chains tasks, so using the
+        centroid as the finishing position fed that error into the arrival
+        estimate of every task after it in the bundle.
+        """
+        if self.kind == "corridor":
+            ends = (self.coords_m[0], self.coords_m[-1])
+            return max(ends, key=lambda e: dist_m(origin, e))
+        if self.kind == "point":
+            return self.coords_m[0]
+        return self.centroid_m  # a boustrophedon sweep ends somewhere inside
+
     def nearest_dist_m(self, origin: tuple[float, float]) -> float:
         """Distance from ``origin`` to the closest point of this feature.
 

@@ -1,0 +1,2887 @@
+# Hand-written held-out evaluation set (Phase 5).
+#
+# Rule 4: these instructions are written by hand and NEVER passed through the
+# back-translation phrase banks in planguard/copilot/dataset_gen.py. Scores on
+# this file are reported in their own column and must never be averaged with
+# the in-distribution test split.
+#
+# Authoring rules, so the set stays scoreable:
+#   * every instruction must contain enough to reconstruct its plan exactly --
+#     budget, dwell, aircraft counts, link needs, ordering, fallbacks
+#   * requires_link is impossible on north_ridge: it reaches 8051 m from base
+#     and the link range is 7500 m, so the validator rejects it
+#   * station_keep needs dwell_s; return_to_rally needs rally_point; any task
+#     with requires_link needs a link_lost fallback
+#   * the budget must exceed the makespan lower bound, which tests/ checks
+#
+# Reference durations at 4 aircraft, 30 m/s (one aircraft unless noted):
+#   sweep north_ridge   865 s (2ac 531, 3ac 420)   sweep east_sector  417 s (2ac 306)
+#   sweep south_valley  357 s (2ac 190)            patrol river       193 s (2ac 142)
+#   patrol highway      258 s (2ac 208)            station bridge     172 s + dwell
+#   station rally_alpha  27 s + dwell              station relay_hill 139 s + dwell
+#   station rally_bravo 145 s + dwell              rally <any point>  travel only
+#
+# register: radio | formal | chatty | bulleted | terse
+
+items:
+  # ----------------------------------------------------------------- radio ---
+  - id: h001
+    register: radio
+    notes: clipped, no articles, abbreviated units
+    instruction: >-
+      Sweep south valley, single ship. 15 min hard stop.
+    plan:
+      name: south valley sweep
+      time_budget_s: 900
+      tasks:
+        - id: sweep_south
+          kind: sweep
+          target: south_valley
+
+  - id: h002
+    register: radio
+    notes: two-digit minute figure, aircraft count as a numeral
+    instruction: >-
+      Need 2 ships on north ridge for coverage. Window is 20 min.
+    plan:
+      name: north ridge coverage
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+
+  - id: h003
+    register: radio
+    notes: comms requirement stated as jargon; rally by callsign
+    instruction: >-
+      Overwatch on the bridge, 10 min on station. Comms must stay up. Link
+      goes down, RTB to rally alpha. 25 min total.
+    plan:
+      name: bridge overwatch
+      time_budget_s: 1500
+      tasks:
+        - id: bridge_watch
+          kind: station_keep
+          target: bridge
+          dwell_s: 600
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h004
+    register: radio
+    notes: sequencing by "then", no explicit dependency language
+    instruction: >-
+      River corridor first, then highway corridor. One ship each. 18 min.
+    plan:
+      name: two corridors
+      time_budget_s: 1080
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          depends_on: [river]
+
+  - id: h005
+    register: radio
+    notes: fuel fallback only, no link task
+    instruction: >-
+      East sector sweep, two up. Bingo fuel recover relay hill. 15 min.
+    plan:
+      name: east sector
+      time_budget_s: 900
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: relay_hill
+
+  - id: h006
+    register: radio
+    notes: stage task, no sensor work
+    instruction: >-
+      Put one ship at relay hill and hold it there 5 min. 10 min window.
+    plan:
+      name: relay hill hold
+      time_budget_s: 600
+      tasks:
+        - id: hold_relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 300
+
+  - id: h007
+    register: radio
+    notes: three tasks, parallel, no ordering
+    instruction: >-
+      Three jobs, run them however. South valley sweep. River corridor
+      patrol. Rally bravo, 5 min on station. 20 min for the lot.
+    plan:
+      name: three jobs
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 300
+
+  - id: h008
+    register: radio
+    notes: delayed start expressed as a hold-off
+    instruction: >-
+      Highway corridor patrol but hold until the 5 min mark. 15 min total.
+    plan:
+      name: delayed highway patrol
+      time_budget_s: 900
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          start_after_s: 300
+
+  - id: h009
+    register: radio
+    notes: loiter fallback
+    instruction: >-
+      Watch rally alpha 8 min, link required. Lose comms, just hold position.
+      12 min window.
+    plan:
+      name: alpha watch
+      time_budget_s: 720
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 480
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: loiter
+
+  - id: h010
+    register: radio
+    notes: three aircraft on one task
+    instruction: >-
+      All three spare ships on north ridge. 12 min.
+    plan:
+      name: ridge push
+      time_budget_s: 720
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+
+  # ---------------------------------------------------------------- formal ---
+  - id: h011
+    register: formal
+    notes: written tasking order, full sentences
+    instruction: >-
+      Primary objective is complete sensor coverage of the south valley. Assign
+      two aircraft to that task. The mission window is thirty minutes.
+    plan:
+      name: south valley primary
+      time_budget_s: 1800
+      tasks:
+        - id: coverage_south_valley
+          kind: sweep
+          target: south_valley
+          aircraft_count: 2
+
+  - id: h012
+    register: formal
+    notes: priority stated explicitly
+    instruction: >-
+      You are to conduct a patrol of the river corridor as the highest priority
+      task, followed by a sweep of the east sector. Allow forty minutes in
+      total. Should any aircraft reach minimum fuel, recover it to rally bravo.
+    plan:
+      name: corridor then sector
+      time_budget_s: 2400
+      tasks:
+        - id: river_patrol
+          kind: corridor_patrol
+          target: river_corridor
+          priority: 1
+        - id: east_sweep
+          kind: sweep
+          target: east_sector
+          depends_on: [river_patrol]
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_bravo
+
+  - id: h013
+    register: formal
+    notes: link requirement in formal phrasing, continue_unlinked
+    instruction: >-
+      Establish and maintain overwatch of the bridge for a period of fifteen
+      minutes. A communications link is required for this task. In the event
+      the link is lost, the aircraft is authorised to continue without it. The
+      total mission duration is thirty-five minutes.
+    plan:
+      name: bridge overwatch formal
+      time_budget_s: 2100
+      tasks:
+        - id: bridge_overwatch
+          kind: station_keep
+          target: bridge
+          dwell_s: 900
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+
+  - id: h014
+    register: formal
+    notes: four tasks, mixed kinds, one dependency
+    instruction: >-
+      The following tasks are to be completed within forty-five minutes. First,
+      sweep the east sector with two aircraft. Second, patrol the highway
+      corridor. Third, position an aircraft at rally alpha. Finally, once the
+      east sector sweep is complete, hold station over the relay hill for ten
+      minutes.
+    plan:
+      name: four task order
+      time_budget_s: 2700
+      tasks:
+        - id: east_sweep
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: highway_patrol
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: stage_alpha
+          kind: rally
+          target: rally_alpha
+        - id: relay_watch
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 600
+          depends_on: [east_sweep]
+
+  - id: h015
+    register: formal
+    notes: hand_off fallback
+    instruction: >-
+      Maintain a watch on rally bravo for twelve minutes. The task requires a
+      communications link. If the link is lost, hand the task to another
+      aircraft. Mission window: twenty-five minutes.
+    plan:
+      name: bravo watch formal
+      time_budget_s: 1500
+      tasks:
+        - id: bravo_watch
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 720
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: hand_off
+
+  # ---------------------------------------------------------------- chatty ---
+  - id: h016
+    register: chatty
+    notes: hedged, digressive, the requirement buried mid-sentence
+    instruction: >-
+      So the main thing I care about this window is the south valley — if we
+      could get a proper sweep of it that would be ideal, and honestly one
+      aircraft should manage it. Let us say fifteen minutes.
+    plan:
+      name: valley please
+      time_budget_s: 900
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+
+  - id: h017
+    register: chatty
+    notes: conversational ordering, dependency stated casually
+    instruction: >-
+      Could you run the river corridor for me, and then after that is finished
+      take a look at the south valley? Half an hour is fine.
+    plan:
+      name: river then valley
+      time_budget_s: 1800
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+
+  - id: h018
+    register: chatty
+    notes: link requirement phrased as a worry
+    instruction: >-
+      I want someone sitting on the bridge for about eight minutes. The thing
+      is I need the feed live the whole time, so comms have to hold. If we do
+      lose the link just bring them back to rally alpha and we will sort it
+      out. Twenty minutes overall.
+    plan:
+      name: bridge feed
+      time_budget_s: 1200
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 480
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h019
+    register: chatty
+    notes: aircraft count expressed as a word, mid-clause
+    instruction: >-
+      The north ridge is a big area so put three aircraft on it, otherwise we
+      will never finish. Give it twenty minutes.
+    plan:
+      name: big ridge
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+
+  - id: h020
+    register: chatty
+    notes: two independent asks, informal join
+    instruction: >-
+      Two things please. One, patrol the highway corridor. Two, park an
+      aircraft at relay hill for six minutes. Twenty minutes should cover it.
+    plan:
+      name: two things
+      time_budget_s: 1200
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 360
+
+  # -------------------------------------------------------------- bulleted ---
+  - id: h021
+    register: bulleted
+    notes: list shape, colon-separated fields
+    instruction: |-
+      Tasks:
+      - sweep east sector, 2 aircraft
+      - patrol river corridor, 1 aircraft
+      Budget: 25 minutes
+    plan:
+      name: sector and corridor
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h022
+    register: bulleted
+    notes: fields as key-value lines
+    instruction: |-
+      Objective: overwatch
+      Location: relay hill
+      On station: 10 min
+      Link: required
+      On link loss: continue anyway
+      Window: 20 min
+    plan:
+      name: relay overwatch
+      time_budget_s: 1200
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 600
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+
+  - id: h023
+    register: bulleted
+    notes: numbered list with an explicit ordering constraint
+    instruction: |-
+      1. sweep south valley (2 aircraft)
+      2. after that, patrol highway corridor
+      3. total time 30 min
+      4. low fuel: go to rally alpha
+    plan:
+      name: valley then highway
+      time_budget_s: 1800
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+          aircraft_count: 2
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          depends_on: [valley]
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h024
+    register: bulleted
+    notes: three bullets, all independent, one staging task
+    instruction: |-
+      - stage an aircraft at rally bravo
+      - sweep the east sector
+      - patrol the river corridor
+      - 25 minutes
+    plan:
+      name: stage and cover
+      time_budget_s: 1500
+      tasks:
+        - id: stage
+          kind: rally
+          target: rally_bravo
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h025
+    register: bulleted
+    notes: delayed start as a bullet field
+    instruction: |-
+      Task: sweep east sector
+      Aircraft: 2
+      Start: not before 4 min
+      Window: 18 min
+    plan:
+      name: delayed east
+      time_budget_s: 1080
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+          start_after_s: 240
+
+  # ----------------------------------------------------------------- terse ---
+  - id: h026
+    register: terse
+    notes: minimal, no jargon
+    instruction: >-
+      Sweep the east sector. 10 minutes.
+    plan:
+      name: east quick
+      time_budget_s: 600
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+
+  - id: h027
+    register: terse
+    notes: two tasks, bare
+    instruction: >-
+      Patrol the river corridor and sweep the south valley. 20 minutes.
+    plan:
+      name: river and valley
+      time_budget_s: 1200
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+
+  - id: h028
+    register: terse
+    notes: dwell in seconds rather than minutes
+    instruction: >-
+      Hold over rally alpha for 90 seconds. 5 minute window.
+    plan:
+      name: short alpha hold
+      time_budget_s: 300
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 90
+
+  - id: h029
+    register: terse
+    notes: half-minute figure
+    instruction: >-
+      Watch the bridge for 7 and a half minutes. 15 minutes total.
+    plan:
+      name: bridge half
+      time_budget_s: 900
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 450
+
+  - id: h030
+    register: terse
+    notes: four aircraft, the whole fleet
+    instruction: >-
+      Put all four aircraft on the north ridge. 12 minutes.
+    plan:
+      name: full fleet ridge
+      time_budget_s: 720
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 4
+
+  # ================================================ batch 2: h031 - h060 ===
+  # Adds shapes batch 1 lacked: two fallbacks on one plan, applies_to scoping,
+  # explicit priorities, dependency chains deeper than one edge.
+
+  - id: h031
+    register: radio
+    notes: two fallbacks on one plan
+    instruction: >-
+      Bridge overwatch, 10 min, comms required. Link drops, continue anyway.
+      Bingo fuel, recover rally alpha. 20 min window.
+    plan:
+      name: bridge two rules
+      time_budget_s: 1200
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 600
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h032
+    register: formal
+    notes: fallback scoped to one named task via applies_to
+    instruction: >-
+      Two tasks within thirty minutes. Sweep the south valley, and maintain a
+      watch on the relay hill for eight minutes with a live link. The link-loss
+      rule applies only to the relay hill watch: on loss of comms, recover that
+      aircraft to rally bravo.
+    plan:
+      name: scoped fallback
+      time_budget_s: 1800
+      tasks:
+        - id: valley_sweep
+          kind: sweep
+          target: south_valley
+        - id: relay_watch
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 480
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_bravo
+          applies_to: [relay_watch]
+
+  - id: h033
+    register: terse
+    notes: chain of three, depth 2
+    instruction: >-
+      River corridor, then the south valley once that is done, then the
+      highway corridor last. 35 minutes.
+    plan:
+      name: chain of three
+      time_budget_s: 2100
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          depends_on: [valley]
+
+  - id: h034
+    register: chatty
+    notes: priority expressed as what matters most
+    instruction: >-
+      The east sector is the one that really matters, treat it as top priority.
+      The river corridor is nice to have, lowest priority. Twenty-five minutes.
+    plan:
+      name: ranked pair
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          priority: 1
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          priority: 3
+      constraints: []
+
+  - id: h035
+    register: bulleted
+    notes: priority as an explicit field
+    instruction: |-
+      - sweep north ridge, 2 aircraft, priority 1
+      - patrol highway corridor, priority 2
+      - stage at rally alpha, priority 3
+      - window: 30 min
+    plan:
+      name: three priorities
+      time_budget_s: 1800
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+          priority: 1
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          priority: 2
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+          priority: 3
+
+  - id: h036
+    register: radio
+    notes: two tasks each needing link, one shared fallback
+    instruction: >-
+      Two comms-dependent jobs. River corridor patrol, link up. Rally bravo
+      station 6 min, link up. Either loses comms, hold position. 20 min.
+    plan:
+      name: both linked
+      time_budget_s: 1200
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 360
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: loiter
+
+  - id: h037
+    register: formal
+    notes: delayed start plus a dependency on the same plan
+    instruction: >-
+      Sweep the east sector with two aircraft. Separately, patrol the river
+      corridor, but do not begin that task before the six minute mark. The
+      mission window is twenty-five minutes.
+    plan:
+      name: delay and sweep
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          start_after_s: 360
+
+  - id: h038
+    register: chatty
+    notes: dwell given in a mixed unit
+    instruction: >-
+      Can you sit on rally alpha for a minute and a half? That is all I need.
+      Give it five minutes to be safe.
+    plan:
+      name: ninety seconds alpha
+      time_budget_s: 300
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 90
+
+  - id: h039
+    register: terse
+    notes: four tasks, no ordering, tight budget
+    instruction: >-
+      Sweep south valley. Patrol river corridor. Patrol highway corridor.
+      Stage at relay hill. 25 minutes.
+    plan:
+      name: four parallel
+      time_budget_s: 1500
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: relay
+          kind: rally
+          target: relay_hill
+
+  - id: h040
+    register: radio
+    notes: hand_off on low fuel
+    instruction: >-
+      North ridge sweep, 2 ships. Anyone low on fuel, hand the task off.
+      18 min.
+    plan:
+      name: ridge handoff
+      time_budget_s: 1080
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+      fallbacks:
+        - trigger: low_fuel
+          action: hand_off
+
+  - id: h041
+    register: formal
+    notes: single_pass constraint
+    instruction: >-
+      Conduct a single-pass sweep of the south valley. Do not re-cover ground.
+      Twenty minutes.
+    plan:
+      name: single pass valley
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+      constraints: [single_pass]
+
+  - id: h042
+    register: bulleted
+    notes: stay_within_map constraint
+    instruction: |-
+      Task: patrol highway corridor
+      Constraint: stay within the mapped area
+      Window: 15 min
+    plan:
+      name: bounded highway
+      time_budget_s: 900
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+      constraints: [stay_within_map]
+
+  - id: h043
+    register: chatty
+    notes: two dependencies on one task
+    instruction: >-
+      I want the river corridor and the highway corridor both done first, and
+      then once they are both finished, sweep the south valley. Forty minutes.
+    plan:
+      name: two then one
+      time_budget_s: 2400
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river, highway]
+
+  - id: h044
+    register: radio
+    notes: dwell longer than most of the budget
+    instruction: >-
+      Long hold. Relay hill, 20 min on station. 25 min window.
+    plan:
+      name: long relay hold
+      time_budget_s: 1500
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 1200
+
+  - id: h045
+    register: terse
+    notes: three aircraft on a corridor
+    instruction: >-
+      Three aircraft on the highway corridor. 12 minutes.
+    plan:
+      name: three on highway
+      time_budget_s: 720
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          aircraft_count: 3
+
+  - id: h046
+    register: formal
+    notes: rally task with explicit priority and a dependency
+    instruction: >-
+      Sweep the east sector. On completion, position one aircraft at rally
+      bravo. The staging task is lowest priority. Allow twenty minutes.
+    plan:
+      name: sweep then stage
+      time_budget_s: 1200
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: stage
+          kind: rally
+          target: rally_bravo
+          priority: 3
+          depends_on: [east]
+
+  - id: h047
+    register: chatty
+    notes: link requirement on a sweep, fallback to continue
+    instruction: >-
+      Sweep the east sector but I need the link live for it — if comms drop
+      just press on regardless, we can live with a gap. Twenty minutes.
+    plan:
+      name: linked east sweep
+      time_budget_s: 1200
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+
+  - id: h048
+    register: bulleted
+    notes: two fallbacks both to rally, different triggers
+    instruction: |-
+      Mission: river corridor patrol, link required
+      Link loss: recover to rally alpha
+      Low fuel: recover to rally alpha
+      Time: 15 min
+    plan:
+      name: river both rules
+      time_budget_s: 900
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_alpha
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h049
+    register: radio
+    notes: start delay in seconds
+    instruction: >-
+      South valley sweep, hold off 30 seconds then go. 10 min.
+    plan:
+      name: short delay valley
+      time_budget_s: 600
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+          start_after_s: 30
+
+  - id: h050
+    register: terse
+    notes: two station_keeps with different dwells
+    instruction: >-
+      Watch rally alpha for 4 minutes and the bridge for 6 minutes.
+      20 minutes total.
+    plan:
+      name: two watches
+      time_budget_s: 1200
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 240
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 360
+
+  - id: h051
+    register: formal
+    notes: max_two_hops constraint
+    instruction: >-
+      Maintain overwatch of the bridge for ten minutes with a live link,
+      limited to two relay hops. On loss of link, continue. Twenty-five
+      minutes.
+    plan:
+      name: two hop bridge
+      time_budget_s: 1500
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 600
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+      constraints: [max_two_hops]
+
+  - id: h052
+    register: chatty
+    notes: aircraft counts on two different tasks
+    instruction: >-
+      Put two aircraft on the north ridge and another two on the east sector,
+      that is the whole fleet committed. Thirty minutes.
+    plan:
+      name: fleet split
+      time_budget_s: 1800
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+
+  - id: h053
+    register: radio
+    notes: rally staging only, nothing else
+    instruction: >-
+      Just get a ship out to rally bravo. 8 min.
+    plan:
+      name: bravo stage only
+      time_budget_s: 480
+      tasks:
+        - id: bravo
+          kind: rally
+          target: rally_bravo
+
+  - id: h054
+    register: bulleted
+    notes: five tasks, the largest shape in the set
+    instruction: |-
+      - sweep south valley
+      - sweep east sector
+      - patrol river corridor
+      - patrol highway corridor
+      - stage at rally alpha
+      - 40 minutes
+    plan:
+      name: five jobs
+      time_budget_s: 2400
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+
+  - id: h055
+    register: terse
+    notes: dependency where the dependent task also has a delay
+    instruction: >-
+      Patrol the river corridor. Then sweep the south valley, but not before
+      the 8 minute mark either way. 30 minutes.
+    plan:
+      name: delay and depend
+      time_budget_s: 1800
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+          start_after_s: 480
+
+  - id: h056
+    register: formal
+    notes: low fuel loiter
+    instruction: >-
+      Sweep the north ridge using three aircraft. Any aircraft reaching
+      minimum fuel is to hold its position rather than return. Twenty minutes.
+    plan:
+      name: ridge loiter
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+      fallbacks:
+        - trigger: low_fuel
+          action: loiter
+
+  - id: h057
+    register: chatty
+    notes: the budget stated first, tasks after
+    instruction: >-
+      We have twenty minutes. In that time I would like the river corridor
+      patrolled and somebody holding over rally alpha for five minutes.
+    plan:
+      name: budget first
+      time_budget_s: 1200
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 300
+
+  - id: h058
+    register: radio
+    notes: task_timeout fallback
+    instruction: >-
+      East sector sweep. Any task times out, hand it off. 15 min.
+    plan:
+      name: east timeout
+      time_budget_s: 900
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+      fallbacks:
+        - trigger: task_timeout
+          action: hand_off
+
+  - id: h059
+    register: bulleted
+    notes: applies_to naming two of three tasks
+    instruction: |-
+      Tasks:
+      - patrol river corridor (link required)
+      - patrol highway corridor (link required)
+      - sweep south valley (no link needed)
+      Link loss affects the two corridor patrols only: recover those to
+      relay hill.
+      Window: 30 min
+    plan:
+      name: corridors linked
+      time_budget_s: 1800
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          requires_link: true
+        - id: valley
+          kind: sweep
+          target: south_valley
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: relay_hill
+          applies_to: [river, highway]
+
+  - id: h060
+    register: terse
+    notes: longest budget in the set
+    instruction: >-
+      Sweep the north ridge on its own, one aircraft, take as long as you
+      need up to 50 minutes.
+    plan:
+      name: slow ridge
+      time_budget_s: 3000
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+
+  # ================================================ batch 3: h061 - h090 ===
+  # Harder phrasings: implicit counts, redundancy, information out of order,
+  # negation, and spelling slips of the kind real tasking contains.
+
+  - id: h061
+    register: radio
+    notes: typo in a feature name
+    instruction: >-
+      Sweep the south valey, one ship. 12 min.
+    plan:
+      name: typo valley
+      time_budget_s: 720
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+
+  - id: h062
+    register: chatty
+    notes: count implied by "a pair"
+    instruction: >-
+      Send a pair of aircraft to cover the east sector. Twenty minutes.
+    plan:
+      name: pair east
+      time_budget_s: 1200
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+
+  - id: h063
+    register: radio
+    notes: negation - explicitly no link needed
+    instruction: >-
+      North ridge sweep, 2 ships. No comms requirement on this one. 18 min.
+    plan:
+      name: ridge no link
+      time_budget_s: 1080
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+
+  - id: h064
+    register: formal
+    notes: redundant restatement of the budget
+    instruction: >-
+      The mission window is thirty minutes. Within those thirty minutes,
+      sweep the south valley and patrol the highway corridor. Again, thirty
+      minutes total.
+    plan:
+      name: redundant budget
+      time_budget_s: 1800
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+
+  - id: h065
+    register: chatty
+    notes: fallback mentioned before the task
+    instruction: >-
+      If we lose comms on this one just bring them home to rally alpha. The
+      task itself is a ten minute watch on the bridge, link required.
+      Twenty-five minutes.
+    plan:
+      name: fallback first
+      time_budget_s: 1500
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 600
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h066
+    register: terse
+    notes: count implied by "both spare"
+    instruction: >-
+      Both spare aircraft onto the river corridor. 10 minutes.
+    plan:
+      name: both on river
+      time_budget_s: 600
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          aircraft_count: 2
+
+  - id: h067
+    register: bulleted
+    notes: fields in a scrambled order
+    instruction: |-
+      Window: 20 min
+      Link: required
+      On station: 8 min
+      Location: relay hill
+      Task: watch
+      On link loss: hold position
+    plan:
+      name: scrambled fields
+      time_budget_s: 1200
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 480
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: loiter
+
+  - id: h068
+    register: radio
+    notes: the bare word ridge, without north
+    instruction: >-
+      Coverage of the ridge, 3 ships. 15 min.
+    plan:
+      name: the ridge
+      time_budget_s: 900
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+
+  - id: h069
+    register: chatty
+    notes: budget expressed as a clock duration
+    instruction: >-
+      We have about half an hour. Use it to sweep the east sector with two
+      aircraft and patrol the river corridor with one.
+    plan:
+      name: half hour
+      time_budget_s: 1800
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h070
+    register: formal
+    notes: ordering by "subsequently"
+    instruction: >-
+      Patrol the highway corridor. Subsequently, and only once that is
+      complete, sweep the east sector. Thirty-five minutes are available.
+    plan:
+      name: subsequently
+      time_budget_s: 2100
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: east
+          kind: sweep
+          target: east_sector
+          depends_on: [highway]
+
+  - id: h071
+    register: terse
+    notes: abbreviated corridor name
+    instruction: >-
+      Patrol the hwy corridor. 10 minutes.
+    plan:
+      name: hwy short
+      time_budget_s: 600
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+
+  - id: h072
+    register: radio
+    notes: dwell as "a quarter of an hour"
+    instruction: >-
+      Bridge station, quarter of an hour on station. 25 min window.
+    plan:
+      name: quarter hour bridge
+      time_budget_s: 1500
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 900
+
+  - id: h073
+    register: bulleted
+    notes: priorities out of numeric order
+    instruction: |-
+      - stage at relay hill, priority 3
+      - sweep south valley, priority 1
+      - patrol river corridor, priority 2
+      - 25 min
+    plan:
+      name: unordered priorities
+      time_budget_s: 1500
+      tasks:
+        - id: relay
+          kind: rally
+          target: relay_hill
+          priority: 3
+        - id: valley
+          kind: sweep
+          target: south_valley
+          priority: 1
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          priority: 2
+
+  - id: h074
+    register: chatty
+    notes: two separate watches with a dependency between them
+    instruction: >-
+      First I want five minutes of eyes on rally alpha, and then after that is
+      done, move over to the bridge and hold there for another five. Twenty
+      minutes.
+    plan:
+      name: move the watch
+      time_budget_s: 1200
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 300
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 300
+          depends_on: [alpha]
+
+  - id: h075
+    register: formal
+    notes: all four aircraft, explicit
+    instruction: >-
+      Commit the entire fleet of four aircraft to the sweep of the north
+      ridge. Fifteen minutes.
+    plan:
+      name: entire fleet
+      time_budget_s: 900
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 4
+
+  - id: h076
+    register: radio
+    notes: the bare word valley, on its own
+    instruction: >-
+      Sweep the valley. 8 min.
+    plan:
+      name: just valley
+      time_budget_s: 480
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+
+  - id: h077
+    register: terse
+    notes: start delay expressed as "wait"
+    instruction: >-
+      Wait 2 minutes, then patrol the river corridor. 12 minutes.
+    plan:
+      name: wait then river
+      time_budget_s: 720
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          start_after_s: 120
+
+  - id: h078
+    register: chatty
+    notes: fuel rule phrased as a question
+    instruction: >-
+      Sweep the east sector for me, two aircraft. And if anyone gets low on
+      fuel could they just head to rally bravo? Twenty minutes.
+    plan:
+      name: polite fuel rule
+      time_budget_s: 1200
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_bravo
+
+  - id: h079
+    register: bulleted
+    notes: dependency given as "blocked by"
+    instruction: |-
+      Task A: patrol river corridor
+      Task B: sweep south valley (blocked by A)
+      Task C: stage at rally alpha (blocked by B)
+      Window: 35 min
+    plan:
+      name: blocked by chain
+      time_budget_s: 2100
+      tasks:
+        - id: a_river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: b_valley
+          kind: sweep
+          target: south_valley
+          depends_on: [a_river]
+        - id: c_alpha
+          kind: rally
+          target: rally_alpha
+          depends_on: [b_valley]
+
+  - id: h080
+    register: radio
+    notes: two aircraft each on two tasks, fleet fully committed
+    instruction: >-
+      Pair on the ridge, pair on the east sector. 20 min.
+    plan:
+      name: pair and pair
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+
+  - id: h081
+    register: formal
+    notes: the link requirement on the corridor, not the station
+    instruction: >-
+      Patrol the river corridor with a live communications link maintained
+      throughout. Additionally, hold station over rally bravo for six minutes;
+      that task does not require a link. Should the link be lost on the
+      corridor patrol, continue without it. Twenty-five minutes.
+    plan:
+      name: link on corridor only
+      time_budget_s: 1500
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 360
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+          applies_to: [river]
+
+  - id: h082
+    register: chatty
+    notes: the bare word sector
+    instruction: >-
+      Could you get the sector covered? One aircraft is fine. Fifteen minutes.
+    plan:
+      name: the sector
+      time_budget_s: 900
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+
+  - id: h083
+    register: terse
+    notes: three watches, three different points
+    instruction: >-
+      Hold rally alpha 3 minutes, relay hill 3 minutes, rally bravo 3 minutes.
+      25 minutes total.
+    plan:
+      name: three holds
+      time_budget_s: 1500
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 180
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 180
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 180
+
+  - id: h084
+    register: radio
+    notes: timeout fallback to loiter
+    instruction: >-
+      Highway corridor patrol. Task times out, hold position. 12 min.
+    plan:
+      name: highway timeout loiter
+      time_budget_s: 720
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+      fallbacks:
+        - trigger: task_timeout
+          action: loiter
+
+  - id: h085
+    register: bulleted
+    notes: aircraft counts on every task
+    instruction: |-
+      - north ridge sweep: 2 aircraft
+      - east sector sweep: 1 aircraft
+      - river corridor patrol: 1 aircraft
+      - total window: 30 min
+    plan:
+      name: counts throughout
+      time_budget_s: 1800
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h086
+    register: formal
+    notes: dwell stated as a range's upper bound
+    instruction: >-
+      Maintain overwatch of the relay hill for no less than twelve minutes.
+      The mission window is twenty minutes.
+    plan:
+      name: no less than twelve
+      time_budget_s: 1200
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 720
+
+  - id: h087
+    register: chatty
+    notes: a task mentioned, then revised to add aircraft
+    instruction: >-
+      Sweep the north ridge — actually make that two aircraft, it is a large
+      area. Twenty minutes.
+    plan:
+      name: revised count
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+
+  - id: h088
+    register: radio
+    notes: bridge referred to as "the crossing"
+    instruction: >-
+      Eyes on the bridge, 6 min. 12 min window.
+    plan:
+      name: bridge six
+      time_budget_s: 720
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 360
+
+  - id: h089
+    register: terse
+    notes: everything at once, maximum parallel demand
+    instruction: >-
+      Sweep north ridge with 2, sweep east sector with 2. 25 minutes.
+    plan:
+      name: full commit
+      time_budget_s: 1500
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+
+  - id: h090
+    register: bulleted
+    notes: constraints and fallbacks together
+    instruction: |-
+      Task: sweep south valley, single pass only
+      Aircraft: 2
+      Low fuel: recover to rally alpha
+      Window: 20 min
+    plan:
+      name: single pass with fuel rule
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+          aircraft_count: 2
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+      constraints: [single_pass]
+
+  # ================================================ batch 4: h091 - h120 ===
+  # Multi-task plans with mixed constraints, and phrasings that bury the
+  # numbers inside prose rather than listing them.
+
+  - id: h091
+    register: formal
+    notes: four tasks with two dependency edges
+    instruction: >-
+      Within forty minutes: patrol the river corridor; sweep the south valley
+      once the corridor patrol has finished; patrol the highway corridor; and
+      sweep the east sector once the highway patrol has finished.
+    plan:
+      name: two parallel chains
+      time_budget_s: 2400
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: east
+          kind: sweep
+          target: east_sector
+          depends_on: [highway]
+
+  - id: h092
+    register: chatty
+    notes: numbers buried in prose
+    instruction: >-
+      There are two things I need in the next twenty minutes. The first is the
+      south valley, and because it is wide I would give it two aircraft. The
+      second is somebody sitting over rally alpha for four minutes, nothing
+      more than that.
+    plan:
+      name: buried numbers
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+          aircraft_count: 2
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 240
+
+  - id: h093
+    register: radio
+    notes: three tasks, one linked, scoped fallback
+    instruction: >-
+      Three jobs, 25 min. Valley sweep. Highway patrol. Bridge station 5 min
+      with comms. Comms rule is for the bridge only, link drops hold position.
+    plan:
+      name: three with scoped rule
+      time_budget_s: 1500
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 300
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: loiter
+          applies_to: [bridge]
+
+  - id: h094
+    register: terse
+    notes: a dependency and a delay on different tasks
+    instruction: >-
+      Sweep the east sector. Patrol the river corridor after the sweep.
+      Also stage at relay hill, not before 10 minutes. 35 minutes.
+    plan:
+      name: mixed timing
+      time_budget_s: 2100
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          depends_on: [east]
+        - id: relay
+          kind: rally
+          target: relay_hill
+          start_after_s: 600
+
+  - id: h095
+    register: bulleted
+    notes: every field populated on a single task
+    instruction: |-
+      Task: station keep
+      Target: relay hill
+      Dwell: 9 min
+      Aircraft: 1
+      Priority: 1
+      Link: required
+      Earliest start: 3 min
+      On link loss: recover to rally bravo
+      On low fuel: recover to rally bravo
+      Constraint: stay within map
+      Window: 25 min
+    plan:
+      name: everything populated
+      time_budget_s: 1500
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 540
+          priority: 1
+          requires_link: true
+          start_after_s: 180
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_bravo
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_bravo
+      constraints: [stay_within_map]
+
+  - id: h096
+    register: chatty
+    notes: the fleet described rather than counted
+    instruction: >-
+      Split the fleet down the middle — half on the north ridge, half on the
+      east sector. Twenty-five minutes.
+    plan:
+      name: split down the middle
+      time_budget_s: 1500
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+
+  - id: h097
+    register: radio
+    notes: dwell and budget identical in magnitude
+    instruction: >-
+      Rally bravo, 10 min on station. 20 min window.
+    plan:
+      name: bravo ten
+      time_budget_s: 1200
+      tasks:
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 600
+
+  - id: h098
+    register: formal
+    notes: priority 2 stated explicitly as the default
+    instruction: >-
+      Sweep the south valley at normal priority, that is priority two. Allow
+      fifteen minutes.
+    plan:
+      name: explicit default priority
+      time_budget_s: 900
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+          priority: 2
+
+  - id: h099
+    register: terse
+    notes: five tasks, mixed kinds, one dependency
+    instruction: >-
+      Sweep south valley. Sweep east sector. Patrol river corridor. Patrol
+      highway corridor. Then stage at rally alpha once the east sector is
+      done. 45 minutes.
+    plan:
+      name: five with one edge
+      time_budget_s: 2700
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+          depends_on: [east]
+
+  - id: h100
+    register: chatty
+    notes: budget as "a bit over" a round figure
+    instruction: >-
+      Give me a sweep of the east sector with two aircraft, and let us say
+      sixteen minutes for it.
+    plan:
+      name: sixteen minutes
+      time_budget_s: 960
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+
+  - id: h101
+    register: radio
+    notes: three-edge chain
+    instruction: >-
+      Sequence: river corridor, then valley sweep, then highway corridor,
+      then stage rally alpha. 45 min.
+    plan:
+      name: four in sequence
+      time_budget_s: 2700
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          depends_on: [valley]
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+          depends_on: [highway]
+
+  - id: h102
+    register: bulleted
+    notes: two linked tasks, two separate fallbacks scoped differently
+    instruction: |-
+      - watch the bridge 5 min, link required
+      - patrol river corridor, link required
+      - bridge loses link: recover to rally alpha
+      - corridor loses link: continue without it
+      - 25 min
+    plan:
+      name: two scoped link rules
+      time_budget_s: 1500
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 300
+          requires_link: true
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_alpha
+          applies_to: [bridge]
+        - trigger: link_lost
+          action: continue_unlinked
+          applies_to: [river]
+
+  - id: h103
+    register: formal
+    notes: task_timeout with return_to_rally
+    instruction: >-
+      Sweep the north ridge with two aircraft. Should any task exceed its
+      allotted time, recover the aircraft to rally bravo. Twenty minutes.
+    plan:
+      name: ridge timeout rally
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+      fallbacks:
+        - trigger: task_timeout
+          action: return_to_rally
+          rally_point: rally_bravo
+
+  - id: h104
+    register: terse
+    notes: a single rally with a delay
+    instruction: >-
+      Stage at rally alpha, not before 5 minutes. 10 minutes.
+    plan:
+      name: delayed stage
+      time_budget_s: 600
+      tasks:
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+          start_after_s: 300
+
+  - id: h105
+    register: chatty
+    notes: redundant aircraft mention
+    instruction: >-
+      One aircraft, just the one, on the river corridor. Ten minutes.
+    plan:
+      name: just the one
+      time_budget_s: 600
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          aircraft_count: 1
+
+  - id: h106
+    register: radio
+    notes: all three fallback triggers on one plan
+    instruction: >-
+      East sector sweep, comms required. Link drops, continue. Bingo fuel,
+      rally alpha. Task times out, hand off. 20 min.
+    plan:
+      name: all three triggers
+      time_budget_s: 1200
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+        - trigger: task_timeout
+          action: hand_off
+
+  - id: h107
+    register: formal
+    notes: two constraints at once
+    instruction: >-
+      Sweep the south valley in a single pass, remaining within the mapped
+      area at all times. Twenty minutes.
+    plan:
+      name: two constraints
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+      constraints: [stay_within_map, single_pass]
+
+  - id: h108
+    register: bulleted
+    notes: dwell in seconds, budget in minutes
+    instruction: |-
+      Task: watch rally alpha
+      Dwell: 150 seconds
+      Window: 8 minutes
+    plan:
+      name: mixed units
+      time_budget_s: 480
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 150
+
+  - id: h109
+    register: terse
+    notes: three aircraft on a sweep plus a second task
+    instruction: >-
+      Three aircraft on the north ridge, one on the river corridor.
+      20 minutes.
+    plan:
+      name: three and one
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h110
+    register: chatty
+    notes: the dependency phrased as "not until"
+    instruction: >-
+      Do not touch the south valley until the river corridor is finished.
+      Both need doing in the next half hour.
+    plan:
+      name: not until
+      time_budget_s: 1800
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+
+  - id: h111
+    register: radio
+    notes: the longest dwell in the set
+    instruction: >-
+      Relay hill, 25 min on station. 30 min window.
+    plan:
+      name: very long hold
+      time_budget_s: 1800
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 1500
+
+  - id: h112
+    register: formal
+    notes: priority on every task, descending
+    instruction: >-
+      In order of importance: the north ridge sweep is priority one with two
+      aircraft, the east sector sweep is priority two, and staging at rally
+      bravo is priority three. Thirty minutes.
+    plan:
+      name: descending priority
+      time_budget_s: 1800
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+          priority: 1
+        - id: east
+          kind: sweep
+          target: east_sector
+          priority: 2
+        - id: bravo
+          kind: rally
+          target: rally_bravo
+          priority: 3
+
+  - id: h113
+    register: bulleted
+    notes: no fallbacks, no link, bare multi-task
+    instruction: |-
+      - sweep east sector
+      - patrol highway corridor
+      - watch rally bravo for 4 min
+      - 25 min
+    plan:
+      name: bare three
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 240
+
+  - id: h114
+    register: terse
+    notes: budget at the lower edge of feasibility for the shape
+    instruction: >-
+      Sweep the north ridge with four aircraft. 9 minutes.
+    plan:
+      name: tight ridge
+      time_budget_s: 540
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 4
+
+  - id: h115
+    register: chatty
+    notes: the link requirement implied by needing to watch live
+    instruction: >-
+      I need to be watching the bridge live for six minutes, so keep the link
+      up for that. If it drops, hold position and try to get it back.
+      Fifteen minutes.
+    plan:
+      name: watching live
+      time_budget_s: 900
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 360
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: loiter
+
+  - id: h116
+    register: radio
+    notes: two rally stages, no sensor work at all
+    instruction: >-
+      Stage one at rally alpha and one at rally bravo. 10 min.
+    plan:
+      name: two stages
+      time_budget_s: 600
+      tasks:
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+        - id: bravo
+          kind: rally
+          target: rally_bravo
+
+  - id: h117
+    register: formal
+    notes: dependency on a rally task
+    instruction: >-
+      Position an aircraft at rally alpha. Once it is in place, patrol the
+      river corridor. Twenty minutes.
+    plan:
+      name: stage then patrol
+      time_budget_s: 1200
+      tasks:
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          depends_on: [alpha]
+
+  - id: h118
+    register: bulleted
+    notes: four tasks, three with aircraft counts
+    instruction: |-
+      - north ridge sweep, 2 aircraft
+      - east sector sweep, 2 aircraft
+      - river corridor patrol, 1 aircraft
+      - stage rally alpha
+      - window 35 min
+    plan:
+      name: counts and a stage
+      time_budget_s: 2100
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+
+  - id: h119
+    register: terse
+    notes: a half-minute dwell
+    instruction: >-
+      Watch rally alpha for 30 seconds. 5 minutes.
+    plan:
+      name: thirty second watch
+      time_budget_s: 300
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 30
+
+  - id: h120
+    register: chatty
+    notes: the budget as the last thing mentioned, almost an afterthought
+    instruction: >-
+      Sweep the east sector, patrol the highway corridor, and if there is time
+      put someone over the relay hill for five minutes. Oh — twenty-five
+      minutes for all of it.
+    plan:
+      name: afterthought budget
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 300
+
+  # ================================================ batch 5: h121 - h150 ===
+  # Deliberately awkward: run-on sentences, mid-sentence correction, passive
+  # voice, inverted clause order, and instructions that read as if dictated.
+
+  - id: h121
+    register: chatty
+    notes: run-on, single sentence, three tasks
+    instruction: >-
+      Right so what I need is the south valley swept and the river corridor
+      patrolled and then also if you can manage it someone over rally alpha
+      for four minutes and all of that inside twenty-five minutes please.
+    plan:
+      name: run on three
+      time_budget_s: 1500
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 240
+
+  - id: h122
+    register: chatty
+    notes: mid-sentence correction of the target
+    instruction: >-
+      Sweep the south valley — no, sorry, the east sector. One aircraft.
+      Fifteen minutes.
+    plan:
+      name: corrected target
+      time_budget_s: 900
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+
+  - id: h123
+    register: formal
+    notes: passive voice throughout
+    instruction: >-
+      The east sector is to be swept by two aircraft. The highway corridor is
+      to be patrolled. Thirty minutes are allocated.
+    plan:
+      name: passive voice
+      time_budget_s: 1800
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+
+  - id: h124
+    register: chatty
+    notes: dictated, with filler
+    instruction: >-
+      Okay, um, so, north ridge, give that two aircraft, and then, let me
+      think, yes, twenty minutes should do it.
+    plan:
+      name: dictated ridge
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+
+  - id: h125
+    register: terse
+    notes: inverted - budget, then fallback, then task
+    instruction: >-
+      Twenty minutes. Low fuel goes to relay hill. Sweep the south valley.
+    plan:
+      name: inverted order
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: relay_hill
+
+  - id: h126
+    register: radio
+    notes: heavy abbreviation
+    instruction: >-
+      S valley swp, 1 ac, 12 min.
+    plan:
+      name: abbreviated
+      time_budget_s: 720
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+
+  - id: h127
+    register: chatty
+    notes: the count stated as what is left over
+    instruction: >-
+      Put two on the east sector and whatever is left over, the other two, on
+      the north ridge. Twenty-five minutes.
+    plan:
+      name: left over
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+
+  - id: h128
+    register: formal
+    notes: conditional phrasing for the dependency
+    instruction: >-
+      The sweep of the south valley may not commence until such time as the
+      patrol of the river corridor has been completed. Thirty minutes.
+    plan:
+      name: may not commence
+      time_budget_s: 1800
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+
+  - id: h129
+    register: terse
+    notes: two numbers adjacent, easy to transpose
+    instruction: >-
+      Watch the bridge 8 minutes. Window 18 minutes.
+    plan:
+      name: adjacent numbers
+      time_budget_s: 1080
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 480
+
+  - id: h130
+    register: bulleted
+    notes: a bullet list with a trailing prose sentence
+    instruction: |-
+      - sweep north ridge, 3 aircraft
+      - patrol river corridor
+      Both of these need to be finished inside twenty minutes, and if anyone
+      runs low on fuel send them to rally alpha.
+    plan:
+      name: list plus prose
+      time_budget_s: 1200
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+
+  - id: h131
+    register: radio
+    notes: callsign style rally reference
+    instruction: >-
+      Bravo station, 6 min. Comms up. Link drops, RTB bravo. 15 min.
+    plan:
+      name: bravo station
+      time_budget_s: 900
+      tasks:
+        - id: bravo
+          kind: station_keep
+          target: rally_bravo
+          dwell_s: 360
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: return_to_rally
+          rally_point: rally_bravo
+
+  - id: h132
+    register: chatty
+    notes: the link need stated twice in different words
+    instruction: >-
+      Patrol the river corridor and keep comms live for it — I really do need
+      the link up the whole way along. If it drops, continue anyway.
+      Fifteen minutes.
+    plan:
+      name: link twice
+      time_budget_s: 900
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+
+  - id: h133
+    register: formal
+    notes: five tasks, two dependencies, two fallbacks
+    instruction: >-
+      Within forty-five minutes, carry out the following. Sweep the north
+      ridge with two aircraft. Sweep the east sector. Patrol the river
+      corridor once the ridge sweep is complete. Patrol the highway corridor
+      once the east sector sweep is complete. Position an aircraft at rally
+      alpha. On low fuel, recover to rally alpha. On task timeout, hand off.
+    plan:
+      name: large formal order
+      time_budget_s: 2700
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          depends_on: [ridge]
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          depends_on: [east]
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha
+        - trigger: task_timeout
+          action: hand_off
+
+  - id: h134
+    register: terse
+    notes: task named before the verb
+    instruction: >-
+      The highway corridor — patrol it. 10 minutes.
+    plan:
+      name: target first
+      time_budget_s: 600
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+
+  - id: h135
+    register: radio
+    notes: delay and dwell on the same task
+    instruction: >-
+      Relay hill station 7 min, hold off until the 4 min mark. 20 min.
+    plan:
+      name: delay and dwell
+      time_budget_s: 1200
+      tasks:
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 420
+          start_after_s: 240
+
+  - id: h136
+    register: chatty
+    notes: priority phrased as "drop it if you have to"
+    instruction: >-
+      The east sector is the important one, priority one. The river corridor
+      you can drop if you have to, call that priority three. Twenty-five
+      minutes.
+    plan:
+      name: drop if you have to
+      time_budget_s: 1500
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          priority: 1
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          priority: 3
+
+  - id: h137
+    register: bulleted
+    notes: fields using arrows
+    instruction: |-
+      sweep -> south valley -> 2 aircraft
+      patrol -> river corridor -> 1 aircraft
+      window -> 20 min
+    plan:
+      name: arrow fields
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+          aircraft_count: 2
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h138
+    register: formal
+    notes: hand_off on link loss, scoped
+    instruction: >-
+      Maintain a watch over the bridge for ten minutes, with a link required.
+      Patrol the highway corridor; no link is required for that task. If the
+      bridge watch loses its link, hand the task to another aircraft. Thirty
+      minutes.
+    plan:
+      name: scoped handoff
+      time_budget_s: 1800
+      tasks:
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 600
+          requires_link: true
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+      fallbacks:
+        - trigger: link_lost
+          action: hand_off
+          applies_to: [bridge]
+
+  - id: h139
+    register: terse
+    notes: two sweeps, one aircraft each, tight
+    instruction: >-
+      Sweep the south valley and the east sector, one aircraft each.
+      18 minutes.
+    plan:
+      name: two sweeps one each
+      time_budget_s: 1080
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: east
+          kind: sweep
+          target: east_sector
+
+  - id: h140
+    register: radio
+    notes: budget only, single task, minimal
+    instruction: >-
+      River corridor. 6 min.
+    plan:
+      name: river six
+      time_budget_s: 360
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h141
+    register: chatty
+    notes: numbers spelled out in full
+    instruction: >-
+      I would like three aircraft on the north ridge and the whole thing
+      wrapped up within eighteen minutes.
+    plan:
+      name: spelled out
+      time_budget_s: 1080
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 3
+
+  - id: h142
+    register: formal
+    notes: constraint plus link plus dependency
+    instruction: >-
+      Patrol the river corridor with a link maintained, limited to two relay
+      hops. Once complete, sweep the south valley. If the link is lost,
+      continue. Thirty minutes.
+    plan:
+      name: hops and chain
+      time_budget_s: 1800
+      tasks:
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+        - id: valley
+          kind: sweep
+          target: south_valley
+          depends_on: [river]
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+      constraints: [max_two_hops]
+
+  - id: h143
+    register: bulleted
+    notes: two tasks with identical dwells
+    instruction: |-
+      - watch rally alpha, 5 min
+      - watch relay hill, 5 min
+      - 20 min window
+    plan:
+      name: identical dwells
+      time_budget_s: 1200
+      tasks:
+        - id: alpha
+          kind: station_keep
+          target: rally_alpha
+          dwell_s: 300
+        - id: relay
+          kind: station_keep
+          target: relay_hill
+          dwell_s: 300
+
+  - id: h144
+    register: terse
+    notes: the whole fleet on a corridor
+    instruction: >-
+      All four aircraft on the highway corridor. 10 minutes.
+    plan:
+      name: four on highway
+      time_budget_s: 600
+      tasks:
+        - id: highway
+          kind: corridor_patrol
+          target: highway_corridor
+          aircraft_count: 4
+
+  - id: h145
+    register: radio
+    notes: three tasks in one line, comma separated
+    instruction: >-
+      Valley sweep, river patrol, alpha stage. 20 min.
+    plan:
+      name: comma separated
+      time_budget_s: 1200
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+
+  - id: h146
+    register: chatty
+    notes: budget given as a deadline rather than a duration
+    instruction: >-
+      Everything needs to be done within the half hour. Sweep the east sector
+      with two aircraft and patrol the river corridor.
+    plan:
+      name: within the half hour
+      time_budget_s: 1800
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          aircraft_count: 2
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h147
+    register: formal
+    notes: a single task with every optional field left default
+    instruction: >-
+      Sweep the south valley. The mission window is twelve minutes.
+    plan:
+      name: all defaults
+      time_budget_s: 720
+      tasks:
+        - id: valley
+          kind: sweep
+          target: south_valley
+
+  - id: h148
+    register: bulleted
+    notes: fallback given before the tasks in a list
+    instruction: |-
+      Standing rule: low fuel, recover to rally bravo.
+      Tasks:
+      - sweep north ridge, 2 aircraft
+      - watch the bridge, 5 min
+      Window: 25 min
+    plan:
+      name: standing rule first
+      time_budget_s: 1500
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: bridge
+          kind: station_keep
+          target: bridge
+          dwell_s: 300
+      fallbacks:
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_bravo
+
+  - id: h149
+    register: terse
+    notes: dependency with the dependent task named first
+    instruction: >-
+      Sweep the east sector, but only after the river corridor patrol is
+      finished. Patrol the river corridor too, obviously. 30 minutes.
+    plan:
+      name: dependent named first
+      time_budget_s: 1800
+      tasks:
+        - id: east
+          kind: sweep
+          target: east_sector
+          depends_on: [river]
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+
+  - id: h150
+    register: chatty
+    notes: the largest and most awkward item in the set
+    instruction: >-
+      Last one and it is a big one, sorry. I need the north ridge swept, give
+      that two aircraft because it is huge, and the east sector as well,
+      that one can take one aircraft. Then once the ridge is finished I want
+      the river corridor patrolled, and separately, whenever, someone staged
+      at rally alpha. Keep the link up for the river corridor please. If that
+      link drops just continue without it, and anyone low on fuel goes back to
+      rally alpha. Forty-five minutes for everything.
+    plan:
+      name: the big one
+      time_budget_s: 2700
+      tasks:
+        - id: ridge
+          kind: sweep
+          target: north_ridge
+          aircraft_count: 2
+        - id: east
+          kind: sweep
+          target: east_sector
+        - id: river
+          kind: corridor_patrol
+          target: river_corridor
+          requires_link: true
+          depends_on: [ridge]
+        - id: alpha
+          kind: rally
+          target: rally_alpha
+      fallbacks:
+        - trigger: link_lost
+          action: continue_unlinked
+        - trigger: low_fuel
+          action: return_to_rally
+          rally_point: rally_alpha

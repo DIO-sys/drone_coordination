@@ -133,10 +133,15 @@ def score_path(
         feature = cfg.world_map.get(task.target) if task else None
         if task is None or feature is None:  # unreachable for a validated plan
             continue
-        t_s += dist_m(pos, feature.centroid_m) / cfg.fleet.speed_mps
+        # entry and exit, not the centroid in both places. A corridor patrol
+        # starts at the nearer end and finishes at the far one; charging
+        # travel to the centroid and then pretending the aircraft is parked
+        # there understated the trip out and misplaced the aircraft by up to
+        # 1.5 km for every task later in the bundle.
+        t_s += dist_m(pos, feature.entry_m(pos)) / cfg.fleet.speed_mps
         total += task_value(task) * cfg.cbba.discount_per_s**t_s
         t_s += per_aircraft_work_s(task, cfg)
-        pos = feature.centroid_m
+        pos = feature.exit_m(pos)
     return total
 
 

@@ -1,0 +1,15 @@
+# Plan sampler (Phase 3). Budget ratios are multiples of the validator's
+# makespan lower bound, so they mean the same thing for a one-rally plan and a
+# four-sweep plan. The range is calibrated by `--pilot`: see ARCHITECTURE 10.
+min_tasks: 1
+max_tasks: 4
+min_budget_ratio: 1.01
+max_budget_ratio: 1.80
+p_multi_aircraft: 0.35
+max_aircraft_per_task: 3
+p_requires_link: 0.4
+p_depends: 0.25
+p_start_after: 0.15
+min_dwell_s: 120.0
+max_dwell_s: 900.0
+p_low_fuel_fallback: 0.5

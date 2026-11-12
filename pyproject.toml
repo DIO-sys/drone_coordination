@@ -10,10 +10,18 @@ dependencies = [
     "pyyaml>=6.0",
     "pyarrow>=17.0",
     "py_trees>=2.2",
+    # Rule 11: only the LLM stack is optional. `uv sync` with no extras must
+    # still run the simulator, CBBA, the validator *and the risk model*, so
+    # these are not behind an extra. None of them needs a GPU.
+    "xgboost>=2.1",
+    "scikit-learn>=1.5",
+    "shap>=0.46",
 ]
 
 [project.optional-dependencies]
-risk = ["xgboost>=2.1", "scikit-learn>=1.5", "shap>=0.46", "matplotlib>=3.9"]
+# Plot rendering only. Every number is also printed as a table, so the
+# risk model and its calibration report run without this.
+figures = ["matplotlib>=3.9"]
 llm = ["transformers>=4.45", "peft>=0.13", "trl>=0.11", "bitsandbytes>=0.44", "outlines>=0.1", "langchain>=0.3", "langgraph>=0.2"]
 api = ["fastapi>=0.115", "uvicorn>=0.32", "websockets>=13.0"]
 
@@ -36,7 +44,7 @@ strict = true
 warn_return_any = true
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "py_trees.*"]
+module = ["pyarrow.*", "py_trees.*", "xgboost.*", "sklearn.*", "shap.*", "matplotlib.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

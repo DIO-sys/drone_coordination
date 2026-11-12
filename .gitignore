@@ -9,3 +9,4 @@ data/
 models/
 *.parquet
 EXPLANATION.md
+models/
